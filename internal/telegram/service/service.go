@@ -51,7 +51,7 @@ func (s *Server) Start() {
 
 // SetupWebhook registers the webhook URL with Telegram
 func (s *Server) SetupWebhook(webhookURL string) error {
-	wh := tgbotapi.NewWebhook(webhookURL + "/webhook")
+	wh, _ := tgbotapi.NewWebhook(webhookURL + "/webhook")
 	_, err := s.Bot.Request(wh)
 	return err
 }

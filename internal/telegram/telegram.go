@@ -1,4 +1,4 @@
-package main
+package telegram
 
 import (
 	"context"
@@ -12,7 +12,9 @@ import (
 	"github.com/iabyzov/coinmarketcap-telegram-bot/internal/telegram/service"
 )
 
-func main() {
+var server *service.Server
+
+func init() {
 	botToken := os.Getenv("TELEGRAM_BOT_TOKEN")
 	if botToken == "" {
 		log.Fatal("TELEGRAM_BOT_TOKEN environment variable is not set")
@@ -26,25 +28,13 @@ func main() {
 
 	alertsRepository := adapters.NewAlertsFirestoreRepository(firestoreClient)
 
-	server, err := service.NewServer(botToken, alertsRepository)
+	server, err = service.NewServer(botToken, alertsRepository)
 	if err != nil {
 		log.Fatal(err)
 	}
+}
 
-	webhookURL := os.Getenv("WEBHOOK_URL")
-	if webhookURL != "" {
-		port := os.Getenv("PORT")
-		if port == "" {
-			port = "8080"
-		}
-		if err := server.SetupWebhook(webhookURL); err != nil {
-			log.Fatalf("Failed to set webhook: %v", err)
-		}
-		http.HandleFunc("/webhook", server.HandleWebhook)
-		log.Printf("Bot started in webhook mode: @%s, listening on :%s", server.Bot.Self.UserName, port)
-		log.Fatal(http.ListenAndServe(":"+port, nil))
-	} else {
-		log.Printf("Bot started in polling mode: @%s", server.Bot.Self.UserName)
-		server.Start()
-	}
+// HandleWebhook is the entry point for Google Cloud Functions
+func HandleWebhook(w http.ResponseWriter, r *http.Request) {
+	server.HandleWebhook(w, r)
 }

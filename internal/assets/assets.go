@@ -5,16 +5,16 @@ import (
 	"os"
 )
 
-func main() {
+func Handler() {
 	cmcAPIKey := os.Getenv("CMC_API_KEY")
 	if cmcAPIKey == "" {
 		log.Fatal("CMC_API_KEY environment variable not set")
 	}
 
-	server, err := NewServer(cmcAPIKey)
+	_, err := NewServer(cmcAPIKey)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	server.Start()
+	//server.Start()
 }
