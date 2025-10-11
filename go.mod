@@ -5,7 +5,6 @@ go 1.22.3
 require (
 	cloud.google.com/go/firestore v1.18.0
 	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
-	github.com/GoogleCloudPlatform/functions-framework-go v1.5.2
 )
 
 require (
