@@ -6,22 +6,21 @@ import (
 	"log"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"github.com/iabyzov/coinmarketcap-telegram-bot/internal/adapters"
 	"github.com/iabyzov/coinmarketcap-telegram-bot/internal/domain/alerts"
 )
 
 // AlertChecker handles checking alerts and sending notifications
 type AlertChecker struct {
-	alertsRepository adapters.AlertsFirestoreRepository
-	priceService     *PriceService
-	bot              *tgbotapi.BotAPI
+	alertsRepository AlertsRepository
+	priceService     PriceFetcher
+	bot              BotSender
 }
 
 // NewAlertChecker creates a new AlertChecker
 func NewAlertChecker(
-	alertsRepository adapters.AlertsFirestoreRepository,
-	priceService *PriceService,
-	bot *tgbotapi.BotAPI,
+	alertsRepository AlertsRepository,
+	priceService PriceFetcher,
+	bot BotSender,
 ) *AlertChecker {
 	return &AlertChecker{
 		alertsRepository: alertsRepository,
