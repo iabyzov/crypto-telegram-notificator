@@ -21,10 +21,10 @@ type Server struct {
 	alerts           map[string][]alerts.PriceAlert
 	alertsMutex      sync.RWMutex
 	updateChan       tgbotapi.UpdatesChannel
-	alertsRepository adapters.AlertsFirestoreRepository
+	alertsRepository *adapters.AlertsFirestoreRepository
 }
 
-func NewServer(botToken string, alertsRepository adapters.AlertsFirestoreRepository) (*Server, error) {
+func NewServer(botToken string, alertsRepository *adapters.AlertsFirestoreRepository) (*Server, error) {
 	bot, err := tgbotapi.NewBotAPI(botToken)
 	if err != nil {
 		return nil, err
