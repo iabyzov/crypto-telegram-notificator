@@ -58,6 +58,9 @@ func (ac *AlertChecker) CheckAlerts(ctx context.Context) error {
 		// Check each alert for this symbol
 		for _, alert := range symbolAlerts {
 			if ac.isAlertTriggered(alert, currentPrice) {
+				if err := ac.alertsRepository.DeleteAlert(ctx, alert); err != nil {
+					log.Printf("Failed to delete alert: %v", err)
+				}
 				if err := ac.sendNotification(alert, currentPrice); err != nil {
 					log.Printf("Failed to send notification for alert: %v", err)
 				}

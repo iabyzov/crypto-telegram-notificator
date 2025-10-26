@@ -10,6 +10,7 @@ import (
 
 // AlertFirestoreModel represents the data structure for storing alerts in Firestore
 type AlertFirestoreModel struct {
+	DocID       string  `firestore:"-"`
 	UserID      int64   `firestore:"user_id"`
 	CoinID      string  `firestore:"coin_id"`
 	TargetPrice float64 `firestore:"target_price"`
@@ -29,7 +30,7 @@ func mapToFirestoreModel(alert alerts.PriceAlert) AlertFirestoreModel {
 }
 
 // mapToDomainModel converts a Firestore model to a domain PriceAlert
-func mapToDomainModel(model AlertFirestoreModel) (alerts.PriceAlert, error) {
+func mapToDomainModel(model AlertFirestoreModel, docID string) (alerts.PriceAlert, error) {
 	var alertType alerts.AlertType
 	switch model.Type {
 	case "More":
@@ -41,6 +42,7 @@ func mapToDomainModel(model AlertFirestoreModel) (alerts.PriceAlert, error) {
 	}
 
 	return alerts.PriceAlert{
+		Id:          docID,
 		UserID:      model.UserID,
 		Symbol:      model.CoinID,
 		TargetPrice: model.TargetPrice,
@@ -52,19 +54,19 @@ type AlertsFirestoreRepository struct {
 	firestoreClient *firestore.Client
 }
 
-func NewAlertsFirestoreRepository(firestoreClient *firestore.Client) AlertsFirestoreRepository {
+func NewAlertsFirestoreRepository(firestoreClient *firestore.Client) *AlertsFirestoreRepository {
 	if firestoreClient == nil {
 		panic("missing firestore client")
 	}
 
-	return AlertsFirestoreRepository{firestoreClient}
+	return &AlertsFirestoreRepository{firestoreClient}
 }
 
-func (r AlertsFirestoreRepository) alertCollection() *firestore.CollectionRef {
+func (r *AlertsFirestoreRepository) alertCollection() *firestore.CollectionRef {
 	return r.firestoreClient.Collection("alerts")
 }
 
-func (r AlertsFirestoreRepository) AddAlert(ctx context.Context, alert alerts.PriceAlert) {
+func (r *AlertsFirestoreRepository) AddAlert(ctx context.Context, alert alerts.PriceAlert) {
 	collection := r.alertCollection()
 
 	// Convert domain model to Firestore model
@@ -79,7 +81,7 @@ func (r AlertsFirestoreRepository) AddAlert(ctx context.Context, alert alerts.Pr
 }
 
 // GetAllAlerts retrieves all alerts from Firestore
-func (r AlertsFirestoreRepository) GetAllAlerts(ctx context.Context) ([]alerts.PriceAlert, error) {
+func (r *AlertsFirestoreRepository) GetAllAlerts(ctx context.Context) ([]alerts.PriceAlert, error) {
 	collection := r.alertCollection()
 	docs, err := collection.Documents(ctx).GetAll()
 	if err != nil {
@@ -92,7 +94,7 @@ func (r AlertsFirestoreRepository) GetAllAlerts(ctx context.Context) ([]alerts.P
 		if err := doc.DataTo(&model); err != nil {
 			continue
 		}
-		domainAlert, err := mapToDomainModel(model)
+		domainAlert, err := mapToDomainModel(model, doc.Ref.ID)
 		if err != nil {
 			continue
 		}
@@ -100,4 +102,11 @@ func (r AlertsFirestoreRepository) GetAllAlerts(ctx context.Context) ([]alerts.P
 	}
 
 	return result, nil
+}
+
+func (r *AlertsFirestoreRepository) DeleteAlert(ctx context.Context, alert alerts.PriceAlert) error {
+	collection := r.alertCollection()
+
+	_, err := collection.Doc(alert.Id).Delete(ctx)
+	return err
 }

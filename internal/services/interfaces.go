@@ -10,6 +10,7 @@ import (
 // AlertsRepository defines the minimal storage operations AlertChecker needs.
 type AlertsRepository interface {
 	GetAllAlerts(ctx context.Context) ([]alerts.PriceAlert, error)
+	DeleteAlert(ctx context.Context, alert alerts.PriceAlert) error
 }
 
 // PriceFetcher provides current prices for symbols.
