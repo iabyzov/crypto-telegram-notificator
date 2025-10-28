@@ -169,6 +169,11 @@ func (s *Server) handleListAlerts(message *tgbotapi.Message) {
 		return
 	}
 
+	response := s.formatAlertsList(userAlerts)
+	s.sendMessage(message.Chat.ID, response)
+}
+
+func (s *Server) formatAlertsList(userAlerts []alerts.PriceAlert) string {
 	var response strings.Builder
 	response.WriteString("Your active alerts:\n\n")
 	for i, alert := range userAlerts {
@@ -182,8 +187,7 @@ func (s *Server) handleListAlerts(message *tgbotapi.Message) {
 			i+1, emoji, alert.Symbol, typeStr, alert.TargetPrice, alert.Id))
 	}
 	response.WriteString("Use /deletealert <ID> to remove an alert.")
-
-	s.sendMessage(message.Chat.ID, response.String())
+	return response.String()
 }
 
 func (s *Server) handleDeleteAlert(message *tgbotapi.Message) {
