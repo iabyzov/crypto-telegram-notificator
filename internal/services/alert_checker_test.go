@@ -17,6 +17,10 @@ func (f *fakeRepo) GetAllAlerts(ctx context.Context) ([]alerts.PriceAlert, error
 	return f.alerts, nil
 }
 
+func (f *fakeRepo) DeleteAlert(ctx context.Context, alert alerts.PriceAlert) error {
+	return nil
+}
+
 type fakePrice struct {
 	priceMap map[string]float64
 }

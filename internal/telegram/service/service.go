@@ -15,13 +15,20 @@ import (
 	"github.com/iabyzov/coinmarketcap-telegram-bot/internal/domain/alerts"
 )
 
+// AlertsRepository defines the interface for alert storage operations
+type AlertsRepository interface {
+	AddAlert(ctx context.Context, alert alerts.PriceAlert)
+	GetAlertsByUserID(ctx context.Context, userID int64) ([]alerts.PriceAlert, error)
+	DeleteAlert(ctx context.Context, alert alerts.PriceAlert) error
+}
+
 // Server handles bot logic and price monitoring
 type Server struct {
 	Bot              *tgbotapi.BotAPI
 	alerts           map[string][]alerts.PriceAlert
 	alertsMutex      sync.RWMutex
 	updateChan       tgbotapi.UpdatesChannel
-	alertsRepository *adapters.AlertsFirestoreRepository
+	alertsRepository AlertsRepository
 }
 
 func NewServer(botToken string, alertsRepository *adapters.AlertsFirestoreRepository) (*Server, error) {
@@ -84,7 +91,10 @@ func (s *Server) handleMessage(message *tgbotapi.Message) {
 		s.handleHelp(message)
 	case "setalert":
 		s.handleSetAlert(message)
-
+	case "listalerts":
+		s.handleListAlerts(message)
+	case "deletealert":
+		s.handleDeleteAlert(message)
 	default:
 		s.sendMessage(message.Chat.ID, "Unknown command. Type /help for available commands.")
 	}
@@ -92,14 +102,13 @@ func (s *Server) handleMessage(message *tgbotapi.Message) {
 
 func (s *Server) handleHelp(message *tgbotapi.Message) {
 	helpText := `Available commands:
-/setalert <symbol> <price> - Set price alert for cryptocurrency
-/deletealert <symbol> - Delete price alert for cryptocurrency
+/setalert <symbol> <price> <above|below> - Set price alert for cryptocurrency
 /listalerts - List all your active alerts
-/price <symbol> - Get current price for cryptocurrency
+/deletealert <alert_id> - Delete a specific alert by ID
 /help - Show this help message
 
 Example:
-/setalert BTC 50000 - Alert when Bitcoin price exceeds $50,000`
+/setalert BTC 50000 above - Alert when Bitcoin price exceeds $50,000`
 
 	s.sendMessage(message.Chat.ID, helpText)
 }
@@ -145,6 +154,79 @@ func ParseAlertType(s string) (alerts.AlertType, error) {
 		}
 	}
 	return 0, fmt.Errorf("invalid number: %s", s)
+}
+
+func (s *Server) handleListAlerts(message *tgbotapi.Message) {
+	ctx := context.Background()
+	userAlerts, err := s.alertsRepository.GetAlertsByUserID(ctx, message.Chat.ID)
+	if err != nil {
+		s.sendMessage(message.Chat.ID, "Failed to retrieve alerts. Please try again later.")
+		log.Printf("Error retrieving alerts for user %d: %v", message.Chat.ID, err)
+		return
+	}
+
+	if len(userAlerts) == 0 {
+		s.sendMessage(message.Chat.ID, "You have no active alerts.")
+		return
+	}
+
+	var response strings.Builder
+	response.WriteString("Your active alerts:\n\n")
+	for i, alert := range userAlerts {
+		typeStr := "above"
+		emoji := "🚀"
+		if alert.Type == alerts.Less {
+			typeStr = "below"
+			emoji = "📉"
+		}
+		response.WriteString(fmt.Sprintf("%d. %s %s %s at $%.2f\n   ID: %s\n\n",
+			i+1, emoji, alert.Symbol, typeStr, alert.TargetPrice, alert.Id))
+	}
+	response.WriteString("Use /deletealert <ID> to remove an alert.")
+
+	s.sendMessage(message.Chat.ID, response.String())
+}
+
+func (s *Server) handleDeleteAlert(message *tgbotapi.Message) {
+	args := strings.Fields(message.CommandArguments())
+	if len(args) != 1 {
+		s.sendMessage(message.Chat.ID, "Invalid format. Use: /deletealert <alert_id>")
+		return
+	}
+	alertID := args[0]
+
+	ctx := context.Background()
+	
+	// First, verify the alert exists and belongs to the user
+	userAlerts, err := s.alertsRepository.GetAlertsByUserID(ctx, message.Chat.ID)
+	if err != nil {
+		s.sendMessage(message.Chat.ID, "Failed to retrieve alerts. Please try again later.")
+		log.Printf("Error retrieving alerts for user %d: %v", message.Chat.ID, err)
+		return
+	}
+
+	var alertToDelete *alerts.PriceAlert
+	for _, alert := range userAlerts {
+		if alert.Id == alertID {
+			alertToDelete = &alert
+			break
+		}
+	}
+
+	if alertToDelete == nil {
+		s.sendMessage(message.Chat.ID, "Alert not found. Use /listalerts to see your alerts.")
+		return
+	}
+
+	// Delete the alert
+	err = s.alertsRepository.DeleteAlert(ctx, *alertToDelete)
+	if err != nil {
+		s.sendMessage(message.Chat.ID, "Failed to delete alert. Please try again later.")
+		log.Printf("Error deleting alert %s for user %d: %v", alertID, message.Chat.ID, err)
+		return
+	}
+
+	s.sendMessage(message.Chat.ID, fmt.Sprintf("Alert deleted: %s at $%.2f", alertToDelete.Symbol, alertToDelete.TargetPrice))
 }
 
 func (s *Server) sendMessage(chatID int64, text string) {
