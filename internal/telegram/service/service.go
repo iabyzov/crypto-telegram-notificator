@@ -11,7 +11,6 @@ import (
 	"sync"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"github.com/iabyzov/coinmarketcap-telegram-bot/internal/adapters"
 	"github.com/iabyzov/coinmarketcap-telegram-bot/internal/domain/alerts"
 )
 
@@ -31,7 +30,7 @@ type Server struct {
 	alertsRepository AlertsRepository
 }
 
-func NewServer(botToken string, alertsRepository *adapters.AlertsFirestoreRepository) (*Server, error) {
+func NewServer(botToken string, alertsRepository AlertsRepository) (*Server, error) {
 	bot, err := tgbotapi.NewBotAPI(botToken)
 	if err != nil {
 		return nil, err
