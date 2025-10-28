@@ -94,23 +94,33 @@ Users can interact with the bot using these commands:
 - `/setalert <symbol> <price> <above|below>` - Set a price alert
   - Example: `/setalert BTC 50000 above` - Alert when Bitcoin goes above $50,000
   - Example: `/setalert ETH 2000 below` - Alert when Ethereum goes below $2,000
+- `/listalerts` - View all your active alerts with their IDs
+- `/deletealert <alert_id>` - Remove a specific alert using its ID
+  - Example: `/deletealert abc123def456` - Delete the alert with ID abc123def456
 
 ## How It Works
 
 1. **Setting an Alert**: 
    - User sends `/setalert BTC 50000 above` command
    - Bot stores the alert in Firestore
-   - User receives confirmation
+   - User receives confirmation with alert details
 
-2. **Checking Alerts**:
+2. **Managing Alerts**:
+   - User can view all their active alerts with `/listalerts`
+   - Each alert is displayed with a unique ID, symbol, target price, and type (above/below)
+   - User can delete unwanted alerts using `/deletealert <alert_id>`
+   - The system ensures users can only view and delete their own alerts
+
+3. **Checking Alerts**:
    - Every 5 minutes, Cloud Scheduler triggers the alert checker
    - Alert checker fetches all alerts from Firestore
    - For each unique cryptocurrency symbol:
      - Fetches current price from CoinMarketCap
      - Checks if any alert conditions are met
      - Sends Telegram notification to users with triggered alerts
+     - Automatically deletes triggered alerts
 
-3. **Notifications**:
+4. **Notifications**:
    - Users receive a message when their alert is triggered
    - Message includes current price and target price
    - Different emojis for "above" (🚀) and "below" (📉) alerts
