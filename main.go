@@ -1,8 +1,9 @@
-package function
+package main
 
 import (
 	"context"
 	"log"
+	"net/http"
 	"os"
 
 	"cloud.google.com/go/firestore"
@@ -12,8 +13,8 @@ import (
 	"github.com/iabyzov/coinmarketcap-telegram-bot/internal/services"
 )
 
-// CheckPriceAlerts is the Cloud Function entry point for scheduled alert checking
-func CheckPriceAlerts(ctx context.Context, m interface{}) error {
+func main() {
+	// Get environment variables
 	botToken := os.Getenv("TELEGRAM_BOT_TOKEN")
 	if botToken == "" {
 		log.Fatal("TELEGRAM_BOT_TOKEN environment variable is not set")
@@ -29,11 +30,18 @@ func CheckPriceAlerts(ctx context.Context, m interface{}) error {
 		log.Fatal("GCP_PROJECT_ID environment variable is not set")
 	}
 
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
 	// Initialize Firestore client
+	ctx := context.Background()
 	firestoreClient, err := firestore.NewClient(ctx, projectID)
 	if err != nil {
 		log.Fatalf("Failed to create Firestore client: %v", err)
 	}
+	defer firestoreClient.Close()
 
 	// Initialize Telegram bot
 	bot, err := tgbotapi.NewBotAPI(botToken)
@@ -45,16 +53,37 @@ func CheckPriceAlerts(ctx context.Context, m interface{}) error {
 	alertsRepository := adapters.NewAlertsFirestoreRepository(firestoreClient)
 	priceService := services.NewPriceService(cmcAPIKey)
 	alertChecker := handlers.NewAlertChecker(alertsRepository, priceService, bot)
+	telegramHandler := handlers.NewTelegramWebhookHandler(bot, alertsRepository)
 
-	log.Println("Alert job initialized successfully")
+	// Create HTTP server with handlers
+	mux := http.NewServeMux()
 
-	log.Println("Starting price alert check...")
+	// Webhook endpoint for Telegram
+	mux.HandleFunc("/webhook", telegramHandler.HandleWebhook)
 
-	if err := alertChecker.CheckAlerts(ctx); err != nil {
-		log.Printf("Error checking alerts: %v", err)
-		return err
+	// Alert checker endpoint (can be triggered by Cloud Scheduler via HTTP)
+	mux.HandleFunc("/check-alerts", func(w http.ResponseWriter, r *http.Request) {
+		log.Println("Starting price alert check...")
+		
+		if err := alertChecker.CheckAlerts(r.Context()); err != nil {
+			log.Printf("Error checking alerts: %v", err)
+			http.Error(w, "Error checking alerts", http.StatusInternalServerError)
+			return
+		}
+		
+		log.Println("Price alert check completed successfully")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("Alert check completed"))
+	})
+
+	// Health check endpoint
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("OK"))
+	})
+
+	log.Printf("Server starting on port %s", port)
+	if err := http.ListenAndServe(":"+port, mux); err != nil {
+		log.Fatalf("Server failed to start: %v", err)
 	}
-
-	log.Println("Price alert check completed successfully")
-	return nil
 }

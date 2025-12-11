@@ -11,10 +11,10 @@ A Telegram bot that monitors cryptocurrency prices and sends alerts when price t
 
 ## Architecture
 
-The application consists of two Google Cloud Functions:
+The application is deployed as a Google Cloud Run service with two HTTP endpoints:
 
-1. **Telegram Webhook Handler** (`function.go`): Handles incoming messages from users via Telegram webhook
-2. **Alert Checker Job** (`alertjob_function.go`): Scheduled job that checks price alerts every 5 minutes
+1. **Telegram Webhook Handler** (`/webhook`): Handles incoming messages from users via Telegram webhook
+2. **Alert Checker Job** (`/check-alerts`): Scheduled job that checks price alerts every 5 minutes
 
 ## Prerequisites
 
@@ -33,36 +33,43 @@ Both functions require the following environment variables:
 
 ## Deployment
 
-### 1. Deploy the Telegram Webhook Handler
+### 1. Deploy to Google Cloud Run
+
+Build and deploy the service using Cloud Build:
 
 ```bash
-gcloud functions deploy telegram-webhook \
-  --gen2 \
-  --runtime=go122 \
-  --region=us-central1 \
+gcloud run deploy crypto-telegram-notificator \
   --source=. \
-  --entry-point=Handler \
-  --trigger-http \
+  --region=us-central1 \
   --allow-unauthenticated \
   --set-env-vars TELEGRAM_BOT_TOKEN=your_token,CMC_API_KEY=your_api_key,GCP_PROJECT_ID=your_project_id
 ```
 
-After deployment, set the webhook URL:
+Or using Docker:
+
 ```bash
-curl -X POST "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/setWebhook?url=<YOUR_FUNCTION_URL>/webhook"
+# Build the Docker image
+docker build -t gcr.io/YOUR_PROJECT_ID/crypto-telegram-notificator .
+
+# Push to Google Container Registry
+docker push gcr.io/YOUR_PROJECT_ID/crypto-telegram-notificator
+
+# Deploy to Cloud Run
+gcloud run deploy crypto-telegram-notificator \
+  --image=gcr.io/YOUR_PROJECT_ID/crypto-telegram-notificator \
+  --region=us-central1 \
+  --allow-unauthenticated \
+  --set-env-vars TELEGRAM_BOT_TOKEN=your_token,CMC_API_KEY=your_api_key,GCP_PROJECT_ID=your_project_id
 ```
 
-### 2. Deploy the Alert Checker Job
+After deployment, note the service URL (e.g., `https://crypto-telegram-notificator-xxxxx.run.app`).
+
+### 2. Set the Telegram Webhook
+
+Configure Telegram to send updates to your Cloud Run service:
 
 ```bash
-gcloud functions deploy check-price-alerts \
-  --gen2 \
-  --runtime=go122 \
-  --region=us-central1 \
-  --source=. \
-  --entry-point=CheckPriceAlerts \
-  --trigger-topic=price-alerts-trigger \
-  --set-env-vars TELEGRAM_BOT_TOKEN=your_token,CMC_API_KEY=your_api_key,GCP_PROJECT_ID=your_project_id
+curl -X POST "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/setWebhook?url=<YOUR_CLOUD_RUN_URL>/webhook"
 ```
 
 ### 3. Create a Cloud Scheduler Job
@@ -70,14 +77,11 @@ gcloud functions deploy check-price-alerts \
 Create a Cloud Scheduler job to trigger the alert checker every 5 minutes:
 
 ```bash
-# First, create the Pub/Sub topic if it doesn't exist
-gcloud pubsub topics create price-alerts-trigger
-
-# Create the scheduler job
-gcloud scheduler jobs create pubsub check-alerts-job \
+# Create the scheduler job to call the HTTP endpoint
+gcloud scheduler jobs create http check-alerts-job \
   --schedule="*/5 * * * *" \
-  --topic=price-alerts-trigger \
-  --message-body='{"action":"check"}' \
+  --uri="<YOUR_CLOUD_RUN_URL>/check-alerts" \
+  --http-method=GET \
   --location=us-central1 \
   --description="Triggers price alert checking every 5 minutes"
 ```
@@ -112,7 +116,7 @@ Users can interact with the bot using these commands:
    - The system ensures users can only view and delete their own alerts
 
 3. **Checking Alerts**:
-   - Every 5 minutes, Cloud Scheduler triggers the alert checker
+   - Every 5 minutes, Cloud Scheduler triggers the `/check-alerts` endpoint
    - Alert checker fetches all alerts from Firestore
    - For each unique cryptocurrency symbol:
      - Fetches current price from CoinMarketCap
@@ -129,24 +133,20 @@ Users can interact with the bot using these commands:
 
 ```
 .
-├── function.go                          # Telegram webhook handler entry point
-├── alertjob_function.go                 # Alert checker job entry point
+├── main.go                              # Cloud Run HTTP server entry point
+├── Dockerfile                           # Docker configuration for Cloud Run
 ├── internal/
 │   ├── adapters/
 │   │   └── alerts_firestore_repository.go  # Firestore data access
-│   ├── alertjob/
-│   │   └── alertjob.go                     # Alert job initialization
 │   ├── domain/
 │   │   └── alerts/
 │   │       ├── price_alert.go              # Alert domain model
 │   │       └── alert_type.go               # Alert type enum
-│   ├── services/
-│   │   ├── alert_checker.go                # Alert checking logic
-│   │   └── price_service.go                # Price fetching from CoinMarketCap
-│   └── telegram/
-│       ├── telegram.go                     # Telegram bot initialization
-│       └── service/
-│           └── service.go                  # Telegram command handlers
+│   ├── handlers/
+│   │   ├── alerts.go                       # Alert checking logic
+│   │   └── telegram.go                     # Telegram webhook and command handlers
+│   └── services/
+│       └── price_service.go                # Price fetching from CoinMarketCap
 ```
 
 ## Development
@@ -175,13 +175,13 @@ export GCP_PROJECT_ID="your_project_id"
 
 ## Monitoring
 
-Monitor your Cloud Functions in the Google Cloud Console:
-- View logs: `gcloud functions logs read check-price-alerts --limit 50`
-- View metrics in the Cloud Console Functions dashboard
+Monitor your Cloud Run service in the Google Cloud Console:
+- View logs: `gcloud run services logs read crypto-telegram-notificator --limit 50`
+- View metrics in the Cloud Console Cloud Run dashboard
 
 ## Cost Considerations
 
-- **Cloud Functions**: Pay per invocation and compute time
+- **Cloud Run**: Free tier includes 2 million requests per month, plus always-free CPU/memory allocation
 - **Cloud Scheduler**: First 3 jobs per month are free
 - **Firestore**: Free tier includes 1 GB storage and 50K reads per day
 - **CoinMarketCap API**: Free tier includes 333 requests per day (enough for ~33 symbols checked every 5 minutes)
