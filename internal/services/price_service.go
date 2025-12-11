@@ -19,15 +19,23 @@ func NewPriceService(cmcAPIKey string) *PriceService {
 }
 
 // GetPrice fetches the current price for a cryptocurrency symbol
-func (s *PriceService) GetPrice(symbol string) (float64, error) {
+func (s *PriceService) GetPrices(symbols []string) (map[string]float64, error) {
 	client := &http.Client{}
 	req, err := http.NewRequest("GET", "https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest", nil)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 
+	// Join symbols into a comma-separated string
+	symbolParam := ""
+	for i, sym := range symbols {
+		if i > 0 {
+			symbolParam += ","
+		}
+		symbolParam += sym
+	}
 	q := req.URL.Query()
-	q.Add("symbol", symbol)
+	q.Add("symbol", symbolParam)
 	req.URL.RawQuery = q.Encode()
 
 	req.Header.Set("X-CMC_PRO_API_KEY", s.cmcAPIKey)
@@ -35,12 +43,12 @@ func (s *PriceService) GetPrice(symbol string) (float64, error) {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("failed to fetch price: status code %d", resp.StatusCode)
+		return nil, fmt.Errorf("failed to fetch price: status code %d", resp.StatusCode)
 	}
 
 	var result struct {
@@ -52,14 +60,19 @@ func (s *PriceService) GetPrice(symbol string) (float64, error) {
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return 0, err
+		return nil, err
 	}
 
-	if data, ok := result.Data[symbol]; ok {
-		if quote, ok := data.Quote["USD"]; ok {
-			return quote.Price, nil
+	// create a slice to hold prices
+	prices := make(map[string]float64)
+
+	for _, symbol := range symbols {
+		if data, ok := result.Data[symbol]; ok {
+			if quote, ok := data.Quote["USD"]; ok {
+				prices[symbol] = quote.Price
+			}
 		}
 	}
 
-	return 0, fmt.Errorf("price not found for symbol: %s", symbol)
+	return prices, nil
 }

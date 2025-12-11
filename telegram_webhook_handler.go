@@ -1,4 +1,4 @@
-package telegram
+package function
 
 import (
 	"context"
@@ -7,14 +7,12 @@ import (
 	"os"
 
 	"cloud.google.com/go/firestore"
-
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/iabyzov/coinmarketcap-telegram-bot/internal/adapters"
-	"github.com/iabyzov/coinmarketcap-telegram-bot/internal/telegram/service"
+	"github.com/iabyzov/coinmarketcap-telegram-bot/internal/handlers"
 )
 
-var server *service.Server
-
-func init() {
+func Handler(w http.ResponseWriter, r *http.Request) {
 	botToken := os.Getenv("TELEGRAM_BOT_TOKEN")
 	if botToken == "" {
 		log.Fatal("TELEGRAM_BOT_TOKEN environment variable is not set")
@@ -28,13 +26,12 @@ func init() {
 
 	alertsRepository := adapters.NewAlertsFirestoreRepository(firestoreClient)
 
-	server, err = service.NewServer(botToken, alertsRepository)
+	tgBotApi, err := tgbotapi.NewBotAPI(botToken)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("Failed to create Telegram bot client: %v", err)
 	}
-}
 
-// HandleWebhook is the entry point for Google Cloud Functions
-func HandleWebhook(w http.ResponseWriter, r *http.Request) {
-	server.HandleWebhook(w, r)
+	telegramHandler := handlers.NewTelegramWebhookHandler(tgBotApi, alertsRepository)
+
+	telegramHandler.HandleWebhook(w, r)
 }
