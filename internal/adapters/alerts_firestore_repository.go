@@ -104,6 +104,30 @@ func (r *AlertsFirestoreRepository) GetAllAlerts(ctx context.Context) ([]alerts.
 	return result, nil
 }
 
+// GetAlertsByUserID retrieves all alerts for a specific user from Firestore
+func (r *AlertsFirestoreRepository) GetAlertsByUserID(ctx context.Context, userID int64) ([]alerts.PriceAlert, error) {
+	collection := r.alertCollection()
+	docs, err := collection.Where("user_id", "==", userID).Documents(ctx).GetAll()
+	if err != nil {
+		return nil, err
+	}
+
+	var result []alerts.PriceAlert
+	for _, doc := range docs {
+		var model AlertFirestoreModel
+		if err := doc.DataTo(&model); err != nil {
+			continue
+		}
+		domainAlert, err := mapToDomainModel(model, doc.Ref.ID)
+		if err != nil {
+			continue
+		}
+		result = append(result, domainAlert)
+	}
+
+	return result, nil
+}
+
 func (r *AlertsFirestoreRepository) DeleteAlert(ctx context.Context, alert alerts.PriceAlert) error {
 	collection := r.alertCollection()
 
