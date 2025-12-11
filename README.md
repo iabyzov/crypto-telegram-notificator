@@ -176,7 +176,7 @@ export GCP_PROJECT_ID="your_project_id"
 ## Monitoring
 
 Monitor your Cloud Run service in the Google Cloud Console:
-- View logs: `gcloud run services logs read crypto-telegram-notificator --limit 50`
+- View logs: `gcloud logging read "resource.type=cloud_run_revision AND resource.labels.service_name=crypto-telegram-notificator" --limit 50`
 - View metrics in the Cloud Console Cloud Run dashboard
 
 ## Cost Considerations
