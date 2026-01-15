@@ -1,0 +1,32 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  annotations:
+    run.googleapis.com/launch-stage: ALPHA
+  name: my-cloud-run-service
+spec:
+  template:
+    metadata:
+      annotations:
+        run.googleapis.com/execution-environment: gen2
+        run.googleapis.com/container-dependencies: '{"collector":["app"]}'
+        run.googleapis.com/cpu-throttling: 'false'
+    spec:
+      containers:
+      - image: "us-central1-docker.pkg.dev/scenic-dynamo-439619-t4/crypto-telegram-notificator/telegram-handler:latest"
+        env:
+        - name: TELEGRAM_BOT_TOKEN
+          value: 7658163220:AAEhKzwrbOI7KOF1Rs0Z_mXSOPSR_J7n0Mg
+        - name: GCP_PROJECT_ID
+          value: scenic-dynamo-439619-t4
+        - name: CMC_API_KEY
+          value: 68d83f50-b7ff-4c36-9133-f4e20ce8eccf
+        name: app
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8000
+        ports:
+        - containerPort: 8000
+      - image: "us-docker.pkg.dev/cloud-ops-agents-artifacts/cloud-run-gmp-sidecar/cloud-run-gmp-sidecar:1.2.0"
+        name: collector

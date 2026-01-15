@@ -5,15 +5,57 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"cloud.google.com/go/firestore"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/iabyzov/coinmarketcap-telegram-bot/internal/adapters"
 	"github.com/iabyzov/coinmarketcap-telegram-bot/internal/handlers"
 	"github.com/iabyzov/coinmarketcap-telegram-bot/internal/services"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
+// Collector that contains the descriptors for the metrics from the app.
+// Foo is a gauge with no labels. Bar is a counter with no labels.
+type fooBarCollector struct {
+	fooMetric *prometheus.Desc
+	barMetric *prometheus.Desc
+}
+
+func newFooBarCollector() *fooBarCollector {
+	return &fooBarCollector{
+		fooMetric: prometheus.NewDesc("foo_metric",
+			"A foo event has occurred",
+			nil, nil,
+		),
+		barMetric: prometheus.NewDesc("bar_metric",
+			"A bar event has occured",
+			nil, nil,
+		),
+	}
+}
+
+// Each and every collector must implement the Describe function.
+// It essentially writes all descriptors to the prometheus desc channel.
+func (collector *fooBarCollector) Describe(ch chan<- *prometheus.Desc) {
+
+	//Update this section with the each metric you create for a given collector
+	ch <- collector.fooMetric
+	ch <- collector.barMetric
+}
+
+// Collect implements required collect function for all prometheus collectors
+func (collector *fooBarCollector) Collect(ch chan<- prometheus.Metric) {
+	m1 := prometheus.MustNewConstMetric(collector.fooMetric, prometheus.GaugeValue, float64(time.Now().Unix()))
+	m2 := prometheus.MustNewConstMetric(collector.barMetric, prometheus.CounterValue, float64(time.Now().Unix()))
+	ch <- m1
+	ch <- m2
+}
+
 func main() {
+	foo := newFooBarCollector()
+	prometheus.MustRegister(foo)
 	// Get environment variables
 	botToken := os.Getenv("TELEGRAM_BOT_TOKEN")
 	if botToken == "" {
@@ -64,13 +106,13 @@ func main() {
 	// Alert checker endpoint (can be triggered by Cloud Scheduler via HTTP)
 	mux.HandleFunc("/check-alerts", func(w http.ResponseWriter, r *http.Request) {
 		log.Println("Starting price alert check...")
-		
+
 		if err := alertChecker.CheckAlerts(r.Context()); err != nil {
 			log.Printf("Error checking alerts: %v", err)
 			http.Error(w, "Error checking alerts", http.StatusInternalServerError)
 			return
 		}
-		
+
 		log.Println("Price alert check completed successfully")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("Alert check completed"))
@@ -82,8 +124,17 @@ func main() {
 		w.Write([]byte("OK"))
 	})
 
-	log.Printf("Server starting on port %s", port)
-	if err := http.ListenAndServe(":"+port, mux); err != nil {
-		log.Fatalf("Server failed to start: %v", err)
+	promMux := http.NewServeMux()
+	promMux.Handle("/metrics", promhttp.Handler())
+
+	go func() {
+		log.Printf("Server starting on port %s", port)
+		if err := http.ListenAndServe(":"+port, mux); err != nil {
+			log.Fatalf("Server failed to start: %v", err)
+		}
+	}()
+	log.Printf("Prometheus metrics server starting on port 8080")
+	if err := http.ListenAndServe(":8080", promMux); err != nil {
+		log.Fatalf("Prometheus metrics server failed to start: %v", err)
 	}
 }
