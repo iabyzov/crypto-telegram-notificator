@@ -10,7 +10,7 @@ spec:
       annotations:
         run.googleapis.com/execution-environment: gen2
         run.googleapis.com/container-dependencies: '{"collector":["app"]}'
-        run.googleapis.com/cpu-throttling: 'false'
+        run.googleapis.com/cpu-throttling: 'true'
     spec:
       containers:
       - image: "us-central1-docker.pkg.dev/scenic-dynamo-439619-t4/crypto-telegram-notificator/telegram-handler:latest"

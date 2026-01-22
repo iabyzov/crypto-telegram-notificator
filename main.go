@@ -16,46 +16,25 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-// Collector that contains the descriptors for the metrics from the app.
-// Foo is a gauge with no labels. Bar is a counter with no labels.
-type fooBarCollector struct {
-	fooMetric *prometheus.Desc
-	barMetric *prometheus.Desc
-}
+// Application metrics: a counter for number of /check-alerts calls
+// and a histogram for request duration (seconds) of /check-alerts.
+var (
+	barMetric = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "check_alerts_requests_total",
+		Help: "Total number of /check-alerts HTTP requests received",
+	})
 
-func newFooBarCollector() *fooBarCollector {
-	return &fooBarCollector{
-		fooMetric: prometheus.NewDesc("foo_metric",
-			"A foo event has occurred",
-			nil, nil,
-		),
-		barMetric: prometheus.NewDesc("bar_metric",
-			"A bar event has occured",
-			nil, nil,
-		),
-	}
-}
-
-// Each and every collector must implement the Describe function.
-// It essentially writes all descriptors to the prometheus desc channel.
-func (collector *fooBarCollector) Describe(ch chan<- *prometheus.Desc) {
-
-	//Update this section with the each metric you create for a given collector
-	ch <- collector.fooMetric
-	ch <- collector.barMetric
-}
-
-// Collect implements required collect function for all prometheus collectors
-func (collector *fooBarCollector) Collect(ch chan<- prometheus.Metric) {
-	m1 := prometheus.MustNewConstMetric(collector.fooMetric, prometheus.GaugeValue, float64(time.Now().Unix()))
-	m2 := prometheus.MustNewConstMetric(collector.barMetric, prometheus.CounterValue, float64(time.Now().Unix()))
-	ch <- m1
-	ch <- m2
-}
+	fooMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "check_alerts_request_duration_seconds",
+		Help:    "Histogram of request duration for /check-alerts in seconds",
+		Buckets: prometheus.DefBuckets,
+	})
+)
 
 func main() {
-	foo := newFooBarCollector()
-	prometheus.MustRegister(foo)
+	// Register application metrics
+	prometheus.MustRegister(barMetric)
+	prometheus.MustRegister(fooMetric)
 	// Get environment variables
 	botToken := os.Getenv("TELEGRAM_BOT_TOKEN")
 	if botToken == "" {
@@ -105,13 +84,22 @@ func main() {
 
 	// Alert checker endpoint (can be triggered by Cloud Scheduler via HTTP)
 	mux.HandleFunc("/check-alerts", func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
 		log.Println("Starting price alert check...")
+
+		// Increment counter for each request
+		barMetric.Inc()
 
 		if err := alertChecker.CheckAlerts(r.Context()); err != nil {
 			log.Printf("Error checking alerts: %v", err)
 			http.Error(w, "Error checking alerts", http.StatusInternalServerError)
+			// Observe duration even on error
+			fooMetric.Observe(time.Since(start).Seconds())
 			return
 		}
+
+		// Record request duration
+		fooMetric.Observe(time.Since(start).Seconds())
 
 		log.Println("Price alert check completed successfully")
 		w.WriteHeader(http.StatusOK)
