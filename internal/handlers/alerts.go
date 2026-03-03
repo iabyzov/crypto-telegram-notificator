@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sync"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/iabyzov/coinmarketcap-telegram-bot/internal/adapters"
@@ -59,16 +60,26 @@ func (ac *AlertChecker) CheckAlerts(ctx context.Context) error {
 		return fmt.Errorf("failed to get prices: %w", err)
 	}
 
-	for symbol, symbolAlerts := range alertsBySymbol {
+	triggeredAlerts := []alerts.PriceAlert{}
 
-		if err != nil {
-			log.Printf("Failed to get price for %s: %v", symbol, err)
-			continue
-		}
-
+	for _, symbolAlerts := range alertsBySymbol {
 		// Check each alert for this symbol
 		for _, alert := range symbolAlerts {
 			if ac.isAlertTriggered(alert, prices[alert.Symbol]) {
+				triggeredAlerts = append(triggeredAlerts, alert)
+			}
+		}
+	}
+
+	var wg sync.WaitGroup
+	ch := make(chan alerts.PriceAlert, len(triggeredAlerts))
+
+	const maxWorkers = 5
+	for i := 0; i < min(maxWorkers, len(triggeredAlerts)); i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for alert := range ch {
 				if err := ac.alertsRepository.DeleteAlert(ctx, alert); err != nil {
 					log.Printf("Failed to delete alert: %v", err)
 				}
@@ -76,8 +87,15 @@ func (ac *AlertChecker) CheckAlerts(ctx context.Context) error {
 					log.Printf("Failed to send notification for alert: %v", err)
 				}
 			}
-		}
+		}()
 	}
+
+	for _, alert := range triggeredAlerts {
+		ch <- alert
+	}
+
+	close(ch)
+	wg.Wait()
 
 	return nil
 }

@@ -33,7 +33,97 @@ Both functions require the following environment variables:
 
 ## Deployment
 
-### 1. Deploy to Google Cloud Run
+### CI/CD with GitHub Actions
+
+The project includes a GitHub Actions workflow that automatically builds and deploys to Cloud Run on every push to `main`.
+
+#### One-time setup: Workload Identity Federation
+
+Run these commands to set up keyless authentication between GitHub Actions and GCP:
+
+```bash
+# Set variables
+export PROJECT_ID="scenic-dynamo-439619-t4"
+export GITHUB_REPO="YOUR_GITHUB_USERNAME/crypto-telegram-notificator"
+
+# Enable required APIs
+gcloud services enable iamcredentials.googleapis.com --project=$PROJECT_ID
+gcloud services enable run.googleapis.com --project=$PROJECT_ID
+gcloud services enable artifactregistry.googleapis.com --project=$PROJECT_ID
+
+# Create a service account for GitHub Actions
+gcloud iam service-accounts create github-actions-deployer \
+  --display-name="GitHub Actions Deployer" \
+  --project=$PROJECT_ID
+
+# Grant roles to the service account
+SA_EMAIL="github-actions-deployer@${PROJECT_ID}.iam.gserviceaccount.com"
+
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+  --member="serviceAccount:${SA_EMAIL}" \
+  --role="roles/run.admin"
+
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+  --member="serviceAccount:${SA_EMAIL}" \
+  --role="roles/artifactregistry.writer"
+
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+  --member="serviceAccount:${SA_EMAIL}" \
+  --role="roles/iam.serviceAccountUser"
+
+# Create a Workload Identity Pool
+gcloud iam workload-identity-pools create "github-pool" \
+  --location="global" \
+  --display-name="GitHub Actions Pool" \
+  --project=$PROJECT_ID
+
+# Create a Workload Identity Provider
+gcloud iam workload-identity-pools providers create-oidc "github-provider" \
+  --location="global" \
+  --workload-identity-pool="github-pool" \
+  --display-name="GitHub Provider" \
+  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
+  --attribute-condition="assertion.repository == '${GITHUB_REPO}'" \
+  --issuer-uri="https://token.actions.githubusercontent.com" \
+  --project=$PROJECT_ID
+
+# Allow the GitHub repo to impersonate the service account
+WIF_POOL_ID=$(gcloud iam workload-identity-pools describe "github-pool" \
+  --location="global" --format="value(name)" --project=$PROJECT_ID)
+
+gcloud iam service-accounts add-iam-policy-binding $SA_EMAIL \
+  --role="roles/iam.workloadIdentityUser" \
+  --member="principalSet://iam.googleapis.com/${WIF_POOL_ID}/attribute.repository/${GITHUB_REPO}" \
+  --project=$PROJECT_ID
+
+# Print the values to add as GitHub Secrets
+echo ""
+echo "=== Add these as GitHub Secrets ==="
+echo ""
+echo "WIF_PROVIDER:"
+gcloud iam workload-identity-pools providers describe "github-provider" \
+  --location="global" \
+  --workload-identity-pool="github-pool" \
+  --format="value(name)" \
+  --project=$PROJECT_ID
+echo ""
+echo "WIF_SERVICE_ACCOUNT: ${SA_EMAIL}"
+echo "GCP_PROJECT_ID: ${PROJECT_ID}"
+echo ""
+echo "Also add TELEGRAM_BOT_TOKEN and CMC_API_KEY as GitHub Secrets."
+```
+
+#### GitHub Secrets required
+
+| Secret | Description |
+|---|---|
+| `GCP_PROJECT_ID` | Your GCP project ID |
+| `WIF_PROVIDER` | Workload Identity Provider resource name (from setup output) |
+| `WIF_SERVICE_ACCOUNT` | Service account email (from setup output) |
+| `TELEGRAM_BOT_TOKEN` | Telegram bot token |
+| `CMC_API_KEY` | CoinMarketCap API key |
+
+### 1. Deploy to Google Cloud Run (manual)
 
 Build and deploy the service using Cloud Build:
 
