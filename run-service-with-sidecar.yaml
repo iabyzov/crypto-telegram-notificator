@@ -13,14 +13,14 @@ spec:
         run.googleapis.com/cpu-throttling: 'true'
     spec:
       containers:
-      - image: "us-central1-docker.pkg.dev/scenic-dynamo-439619-t4/crypto-telegram-notificator/telegram-handler:latest"
+      - image: "IMAGE_PLACEHOLDER"
         env:
         - name: TELEGRAM_BOT_TOKEN
-          value: 7658163220:AAEhKzwrbOI7KOF1Rs0Z_mXSOPSR_J7n0Mg
+          value: "TELEGRAM_BOT_TOKEN_PLACEHOLDER"
         - name: GCP_PROJECT_ID
-          value: scenic-dynamo-439619-t4
+          value: "GCP_PROJECT_ID_PLACEHOLDER"
         - name: CMC_API_KEY
-          value: 68d83f50-b7ff-4c36-9133-f4e20ce8eccf
+          value: "CMC_API_KEY_PLACEHOLDER"
         name: app
         startupProbe:
           httpGet:

@@ -47,10 +47,15 @@ jobs:
           docker push ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
           docker push ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:latest
 
-      - name: Deploy to Cloud Run
+      - name: Prepare service YAML
         run: |
-          gcloud run deploy ${{ env.SERVICE_NAME }} \
-            --image=${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            --region=${{ env.REGION }} \
-            --allow-unauthenticated \
-            --set-env-vars="TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }},CMC_API_KEY=${{ secrets.CMC_API_KEY }},GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}"
+          IMAGE="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          sed -e "s|IMAGE_PLACEHOLDER|${IMAGE}|g" \
+              -e "s|TELEGRAM_BOT_TOKEN_PLACEHOLDER|${{ secrets.TELEGRAM_BOT_TOKEN }}|g" \
+              -e "s|GCP_PROJECT_ID_PLACEHOLDER|${{ secrets.GCP_PROJECT_ID }}|g" \
+              -e "s|CMC_API_KEY_PLACEHOLDER|${{ secrets.CMC_API_KEY }}|g" \
+              run-service-with-sidecar.yaml > /tmp/service.yaml
+
+      - name: Deploy multi-container service to Cloud Run
+        run: |
+          gcloud run services replace /tmp/service.yaml --region=${{ env.REGION }}
