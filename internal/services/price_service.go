@@ -1,52 +1,33 @@
 package services
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
-// PriceService handles fetching cryptocurrency prices
 type PriceService struct {
 	cmcAPIKey string
+	cache     *redis.Client
+	cacheTTL  time.Duration
 }
 
-// NewPriceService creates a new PriceService
-func NewPriceService(cmcAPIKey string) *PriceService {
+func NewPriceService(cmcAPIKey string, cache *redis.Client, cacheTTL time.Duration) *PriceService {
 	return &PriceService{
 		cmcAPIKey: cmcAPIKey,
+		cache:     cache,
+		cacheTTL:  cacheTTL,
 	}
 }
 
 const retries = 5
 const retryDelay = 2 * time.Second
-
-// GetPrice fetches the current price for a cryptocurrency symbol
-func (s *PriceService) GetPrices(symbols []string) (map[string]float64, error) {
-	var lastErr error
-	var result *price
-	for attempt := 0; attempt < retries; attempt++ {
-		result, lastErr = s.fetchPrices(symbols)
-		if lastErr != nil {
-			time.Sleep(retryDelay)
-			continue
-		}
-		// create a slice to hold prices
-		prices := make(map[string]float64)
-
-		for _, symbol := range symbols {
-			if data, ok := result.Data[symbol]; ok {
-				if quote, ok := data.Quote["USD"]; ok {
-					prices[symbol] = quote.Price
-				}
-			}
-		}
-		return prices, nil
-	}
-
-	return nil, lastErr
-}
 
 type price struct {
 	Data map[string]struct {
@@ -56,23 +37,37 @@ type price struct {
 	} `json:"data"`
 }
 
-func (s *PriceService) fetchPrices(symbols []string) (*price, error) {
+func (s *PriceService) GetPrices(symbols []string) (map[string]float64, error) {
+	// TODO: implement cache-aside here — check s.cache for each symbol before hitting the API
+	ctx := context.Background()
+
 	client := &http.Client{}
 	req, err := http.NewRequest("GET", "https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest", nil)
 	if err != nil {
 		return nil, err
 	}
 
+	prices := make(map[string]float64)
+
 	// Join symbols into a comma-separated string
-	symbolParam := ""
-	for i, sym := range symbols {
-		if i > 0 {
-			symbolParam += ","
+	symbolParams := make([]string, 0, len(symbols))
+	for _, sym := range symbols {
+		val, err := s.cache.Get(ctx, sym).Result()
+		if err == nil {
+			intVal, _ := strconv.ParseFloat(val, 64)
+			prices[sym] = intVal
+			continue
 		}
-		symbolParam += sym
+
+		symbolParams = append(symbolParams, sym)
 	}
+
+	if len(symbolParams) == 0 {
+		return prices, nil
+	}
+
 	q := req.URL.Query()
-	q.Add("symbol", symbolParam)
+	q.Add("symbol", strings.Join(symbolParams, ","))
 	req.URL.RawQuery = q.Encode()
 
 	req.Header.Set("X-CMC_PRO_API_KEY", s.cmcAPIKey)
@@ -94,5 +89,16 @@ func (s *PriceService) fetchPrices(symbols []string) (*price, error) {
 		return nil, err
 	}
 
-	return &result, nil
+	// create a slice to hold prices
+
+	for _, symbol := range symbols {
+		if data, ok := result.Data[symbol]; ok {
+			if quote, ok := data.Quote["USD"]; ok {
+				prices[symbol] = quote.Price
+				s.cache.Set(ctx, symbol, strconv.FormatFloat(quote.Price, 'f', -1, 64), s.cacheTTL).Result()
+			}
+		}
+	}
+
+	return prices, nil
 }

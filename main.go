@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"os"
 
+	"time"
+
 	"cloud.google.com/go/firestore"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/iabyzov/coinmarketcap-telegram-bot/internal/adapters"
@@ -13,6 +15,7 @@ import (
 	"github.com/iabyzov/coinmarketcap-telegram-bot/internal/services"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/redis/go-redis/v9"
 )
 
 var (
@@ -63,9 +66,20 @@ func main() {
 		log.Fatalf("Failed to create Telegram bot: %v", err)
 	}
 
+	// Initialize Redis client
+	redisURL := os.Getenv("UPSTASH_REDIS_URL")
+	if redisURL == "" {
+		log.Fatal("UPSTASH_REDIS_URL environment variable is not set")
+	}
+	redisOpt, err := redis.ParseURL(redisURL)
+	if err != nil {
+		log.Fatalf("Failed to parse Redis URL: %v", err)
+	}
+	rdb := redis.NewClient(redisOpt)
+
 	// Initialize repositories and services
 	alertsRepository := adapters.NewAlertsFirestoreRepository(firestoreClient)
-	priceService := services.NewPriceService(cmcAPIKey)
+	priceService := services.NewPriceService(cmcAPIKey, rdb, 60*time.Second)
 	alertChecker := handlers.NewAlertChecker(alertsRepository, priceService, bot)
 	telegramHandler := handlers.NewTelegramWebhookHandler(bot, alertsRepository)
 
