@@ -5,12 +5,21 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/iabyzov/coinmarketcap-telegram-bot/internal/adapters"
 	"github.com/iabyzov/coinmarketcap-telegram-bot/internal/domain/alerts"
 	"github.com/iabyzov/coinmarketcap-telegram-bot/internal/services"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 )
+
+var checkAlertDuration = promauto.NewHistogram(prometheus.HistogramOpts{
+	Name:    "price_check_duration_seconds",
+	Help:    "End-to-end duration of CheckAlerts() runs in seconds",
+	Buckets: []float64{0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0},
+})
 
 // AlertChecker handles checking alerts and sending notifications
 type AlertChecker struct {
@@ -34,6 +43,11 @@ func NewAlertChecker(
 
 // CheckAlerts fetches all alerts, checks them against current prices, and sends notifications
 func (ac *AlertChecker) CheckAlerts(ctx context.Context) error {
+	start := time.Now()
+	defer func() {
+		checkAlertDuration.Observe(time.Since(start).Seconds())
+	}()
+
 	allAlerts, err := ac.alertsRepository.GetAllAlerts(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get alerts: %w", err)
