@@ -14,23 +14,23 @@ import (
 	"github.com/iabyzov/coinmarketcap-telegram-bot/internal/handlers"
 	"github.com/iabyzov/coinmarketcap-telegram-bot/internal/services"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
 )
 
 var (
-	checkAlertMetric = prometheus.NewCounter(prometheus.CounterOpts{
+	checkAlertMetric = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "check_alert_requests_total",
 		Help: "Total number of /check-alerts endpoint invocations",
 	})
-	webhookMetric = prometheus.NewCounter(prometheus.CounterOpts{
+	webhookMetric = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "webhook_requests_total",
 		Help: "Total number of /webhook endpoint invocations",
 	})
 )
 
 func main() {
-	prometheus.MustRegister(checkAlertMetric, webhookMetric)
 	// Get environment variables
 	botToken := os.Getenv("TELEGRAM_BOT_TOKEN")
 	if botToken == "" {

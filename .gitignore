@@ -1,2 +1,6 @@
 env.yaml
 coinmarketcap-telegram-bot
+TODO.md
+LEARNINGS.md
+.vscode/launch.json
+.DS_Store
