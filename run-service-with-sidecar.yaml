@@ -21,6 +21,8 @@ spec:
           value: "GCP_PROJECT_ID_PLACEHOLDER"
         - name: CMC_API_KEY
           value: "CMC_API_KEY_PLACEHOLDER"
+        - name: UPSTASH_REDIS_URL
+          value: "UPSTASH_REDIS_URL_PLACEHOLDER"
         name: app
         startupProbe:
           httpGet:
