@@ -54,6 +54,7 @@ jobs:
               -e "s|TELEGRAM_BOT_TOKEN_PLACEHOLDER|${{ secrets.TELEGRAM_BOT_TOKEN }}|g" \
               -e "s|GCP_PROJECT_ID_PLACEHOLDER|${{ secrets.GCP_PROJECT_ID }}|g" \
               -e "s|CMC_API_KEY_PLACEHOLDER|${{ secrets.CMC_API_KEY }}|g" \
+              -e "s|UPSTASH_REDIS_URL_PLACEHOLDER|${{ secrets.UPSTASH_REDIS_URL }}|g" \
               run-service-with-sidecar.yaml > /tmp/service.yaml
 
       - name: Deploy multi-container service to Cloud Run
