@@ -174,7 +174,7 @@ func (ac *AlertChecker) sendNotification(ctx context.Context, alert alerts.Price
 	payload, _ := json.Marshal(event)
 
 	if err := ac.eventPublisher.Publish(ctx, []byte(alert.Symbol), payload); err != nil {
-		return fmt.Errorf("Failed to publish alert event: %v", payload)
+		return fmt.Errorf("Failed to publish alert event: %v %v", payload, err)
 	}
 
 	return nil
