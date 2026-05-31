@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"log"
 	"net/http"
 	"os"
@@ -17,6 +18,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
+	"github.com/segmentio/kafka-go"
+	"github.com/segmentio/kafka-go/sasl/plain"
+
+	"net/http/pprof"
 )
 
 var (
@@ -51,6 +56,19 @@ func main() {
 	if port == "" {
 		port = "8080"
 	}
+	dialer := &kafka.Dialer{
+		SASLMechanism: plain.Mechanism{
+			Username: os.Getenv("KAFKA_API_KEY"),
+			Password: os.Getenv("KAFKA_API_SECRET"),
+		},
+		TLS: &tls.Config{},
+	}
+
+	kafkaWriter := kafka.NewWriter(kafka.WriterConfig{
+		Brokers: []string{os.Getenv("KAFKA_BOOTSTRAP_SERVER")},
+		Topic:   "alert-triggered",
+		Dialer:  dialer,
+	})
 
 	// Initialize Firestore client
 	ctx := context.Background()
@@ -80,11 +98,17 @@ func main() {
 	// Initialize repositories and services
 	alertsRepository := adapters.NewAlertsFirestoreRepository(firestoreClient)
 	priceService := services.NewPriceService(cmcAPIKey, rdb, 60*time.Second)
-	alertChecker := handlers.NewAlertChecker(alertsRepository, priceService, bot)
+	kafkaPublisher := adapters.NewKafkaPublisher(kafkaWriter)
+	alertChecker := handlers.NewAlertChecker(alertsRepository, priceService, bot, kafkaPublisher)
 	telegramHandler := handlers.NewTelegramWebhookHandler(bot, alertsRepository)
 
 	// Create HTTP server with handlers
 	mux := http.NewServeMux()
+	mux.HandleFunc("/debug/pprof/", pprof.Index)
+	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 
 	// Webhook endpoint for Telegram
 	mux.HandleFunc("/webhook", func(w http.ResponseWriter, r *http.Request) {

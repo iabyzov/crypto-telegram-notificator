@@ -23,6 +23,12 @@ spec:
           value: "CMC_API_KEY_PLACEHOLDER"
         - name: UPSTASH_REDIS_URL
           value: "UPSTASH_REDIS_URL_PLACEHOLDER"
+        - name: KAFKA_BOOTSTRAP_SERVER                                                                                                                                                                                                                                  
+          value: "KAFKA_BOOTSTRAP_SERVER_PLACEHOLDER"                                                                                                                                                                                                                   
+        - name: KAFKA_API_KEY                                                                                                                                                                                                                                           
+          value: "KAFKA_API_KEY_PLACEHOLDER"                                                                                                                                                                                                                            
+        - name: KAFKA_API_SECRET                                                                                                                                                                                                                                        
+          value: "KAFKA_API_SECRET_PLACEHOLDER"   
         name: app
         startupProbe:
           httpGet:

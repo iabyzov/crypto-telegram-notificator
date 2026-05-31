@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"sync"
@@ -10,6 +11,7 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/iabyzov/coinmarketcap-telegram-bot/internal/adapters"
 	"github.com/iabyzov/coinmarketcap-telegram-bot/internal/domain/alerts"
+	"github.com/iabyzov/coinmarketcap-telegram-bot/internal/events"
 	"github.com/iabyzov/coinmarketcap-telegram-bot/internal/services"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -21,11 +23,16 @@ var checkAlertDuration = promauto.NewHistogram(prometheus.HistogramOpts{
 	Buckets: []float64{0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0},
 })
 
+type EventPublisher interface {
+	Publish(ctx context.Context, key, value []byte) error
+}
+
 // AlertChecker handles checking alerts and sending notifications
 type AlertChecker struct {
 	alertsRepository *adapters.AlertsFirestoreRepository
 	priceService     *services.PriceService
 	bot              *tgbotapi.BotAPI
+	eventPublisher   EventPublisher
 }
 
 // NewAlertChecker creates a new AlertChecker
@@ -33,11 +40,13 @@ func NewAlertChecker(
 	alertsRepository *adapters.AlertsFirestoreRepository,
 	priceService *services.PriceService,
 	bot *tgbotapi.BotAPI,
+	eventPublisher EventPublisher,
 ) *AlertChecker {
 	return &AlertChecker{
 		alertsRepository: alertsRepository,
 		priceService:     priceService,
 		bot:              bot,
+		eventPublisher:   eventPublisher,
 	}
 }
 
@@ -97,7 +106,7 @@ func (ac *AlertChecker) CheckAlerts(ctx context.Context) error {
 				if err := ac.alertsRepository.DeleteAlert(ctx, alert); err != nil {
 					log.Printf("Failed to delete alert: %v", err)
 				}
-				if err := ac.sendNotification(alert, prices[alert.Symbol]); err != nil {
+				if err := ac.sendNotification(ctx, alert, prices[alert.Symbol]); err != nil {
 					log.Printf("Failed to send notification for alert: %v", err)
 				}
 			}
@@ -127,7 +136,7 @@ func (ac *AlertChecker) isAlertTriggered(alert alerts.PriceAlert, currentPrice f
 }
 
 // sendNotification sends a Telegram notification to the user
-func (ac *AlertChecker) sendNotification(alert alerts.PriceAlert, currentPrice float64) error {
+func (ac *AlertChecker) sendNotification(ctx context.Context, alert alerts.PriceAlert, currentPrice float64) error {
 	var message string
 	switch alert.Type {
 	case alerts.More:
@@ -152,5 +161,21 @@ func (ac *AlertChecker) sendNotification(alert alerts.PriceAlert, currentPrice f
 	}
 
 	log.Printf("Alert notification sent to user %d for %s at $%.2f", alert.UserID, alert.Symbol, currentPrice)
+
+	event := events.AlertTriggeredEvent{
+		AlertId:      alert.Id,
+		Symbol:       alert.Symbol,
+		TargetPrice:  alert.TargetPrice,
+		CurrentPrice: currentPrice,
+		UserId:       alert.UserID,
+		AlertType:    alert.Type,
+		TriggeredAt:  time.Now(),
+	}
+	payload, _ := json.Marshal(event)
+
+	if err := ac.eventPublisher.Publish(ctx, []byte(alert.Symbol), payload); err != nil {
+		return fmt.Errorf("Failed to publish alert event: %v", payload)
+	}
+
 	return nil
 }
