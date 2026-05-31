@@ -66,7 +66,7 @@ func main() {
 
 	kafkaWriter := kafka.NewWriter(kafka.WriterConfig{
 		Brokers: []string{os.Getenv("KAFKA_BOOTSTRAP_SERVER")},
-		Topic:   "alert-triggered",
+		Topic:   "alert_triggered",
 		Dialer:  dialer,
 	})
 
