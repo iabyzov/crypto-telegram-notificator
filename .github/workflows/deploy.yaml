@@ -55,6 +55,9 @@ jobs:
               -e "s|GCP_PROJECT_ID_PLACEHOLDER|${{ secrets.GCP_PROJECT_ID }}|g" \
               -e "s|CMC_API_KEY_PLACEHOLDER|${{ secrets.CMC_API_KEY }}|g" \
               -e "s|UPSTASH_REDIS_URL_PLACEHOLDER|${{ secrets.UPSTASH_REDIS_URL }}|g" \
+              -e "s|KAFKA_BOOTSTRAP_SERVER_PLACEHOLDER|${{ secrets.KAFKA_BOOTSTRAP_SERVER }}|g" \                                                                                                                                                                       
+              -e "s|KAFKA_API_KEY_PLACEHOLDER|${{ secrets.KAFKA_API_KEY }}|g" \                                                                                                                                                                                         
+              -e "s|KAFKA_API_SECRET_PLACEHOLDER|${{ secrets.KAFKA_API_SECRET }}|g" \   
               run-service-with-sidecar.yaml > /tmp/service.yaml
 
       - name: Deploy multi-container service to Cloud Run
