@@ -101,6 +101,7 @@ func main() {
 	kafkaPublisher := adapters.NewKafkaPublisher(kafkaWriter)
 	alertChecker := handlers.NewAlertChecker(alertsRepository, priceService, bot, kafkaPublisher)
 	telegramHandler := handlers.NewTelegramWebhookHandler(bot, alertsRepository)
+	notificationHandler := handlers.NewNotificationHandler()
 
 	// Create HTTP server with handlers
 	mux := http.NewServeMux()
@@ -109,6 +110,9 @@ func main() {
 	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
 	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+
+	// Pub/Sub push subscription endpoint
+	mux.HandleFunc("/notifications", notificationHandler.HandleNotification)
 
 	// Webhook endpoint for Telegram
 	mux.HandleFunc("/webhook", func(w http.ResponseWriter, r *http.Request) {
