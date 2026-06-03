@@ -112,7 +112,7 @@ func main() {
 	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 
 	// Pub/Sub push subscription endpoint
-	mux.HandleFunc("/notifications", notificationHandler.HandleNotification)
+	mux.HandleFunc("/notifications/", notificationHandler.HandleNotification)
 
 	// Webhook endpoint for Telegram
 	mux.HandleFunc("/webhook", func(w http.ResponseWriter, r *http.Request) {
