@@ -51,7 +51,7 @@ func main() {
 
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8080"
+		port = "8000"
 	}
 
 	// Initialize Firestore client
@@ -92,7 +92,6 @@ func main() {
 	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
 	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
-
 
 	// Webhook endpoint for Telegram
 	mux.HandleFunc("/webhook", func(w http.ResponseWriter, r *http.Request) {
