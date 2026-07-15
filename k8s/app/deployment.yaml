@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crypto-bot
+  namespace: crypto-bot
+spec:
+  replicas: 2
+  selector: 
+    matchLabels:
+      app: crypto-bot
+  template:
+    metadata:
+      labels:
+        app: crypto-bot
+    spec:
+      serviceAccountName: crypto-bot-sa
+      containers:
+      - name: crypto-bot
+        image: us-central1-docker.pkg.dev/scenic-dynamo-439619-t4/crypto-telegram-notificator/telegram-handler:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8000
+          name: http
+        - containerPort: 8080
+          name: metrics
+        envFrom:
+        - configMapRef:
+            name: crypto-bot-config
+        - secretRef:
+            name: crypto-bot-secrets
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 15
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+      

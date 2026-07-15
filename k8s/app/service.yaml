@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: crypto-bot
+  namespace: crypto-bot
+spec:
+  type: LoadBalancer
+  selector:
+    app: crypto-bot
+  ports: 
+  - name: http
+    port: 8000
+    targetPort: 8000
+    nodePort: 30080
