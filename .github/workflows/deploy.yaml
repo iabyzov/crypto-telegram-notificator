@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - llm
 
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}

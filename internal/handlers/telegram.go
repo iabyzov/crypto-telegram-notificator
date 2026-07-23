@@ -38,7 +38,6 @@ type TelegramWebhookHandler struct {
 func NewTelegramWebhookHandler(tgBotApi *tgbotapi.BotAPI, alertsRepository AlertsRepository, alertIntentParser AlertIntentParser) *TelegramWebhookHandler {
 	return &TelegramWebhookHandler{
 		bot:               tgBotApi,
-		alerts:            make(map[string][]alerts.PriceAlert),
 		alertsRepository:  alertsRepository,
 		alertIntentParser: alertIntentParser,
 	}
@@ -121,10 +120,6 @@ func (s *TelegramWebhookHandler) handleSetAlert(message *tgbotapi.Message) {
 	ctx := context.Background()
 	s.alertsRepository.AddAlert(ctx, alert)
 
-	s.alertsMutex.Lock()
-	s.alerts[alert.Symbol] = append(s.alerts[alert.Symbol], alert)
-	s.alertsMutex.Unlock()
-
 	s.sendMessage(message.Chat.ID, fmt.Sprintf("Alert set for %s at $%.2f", alert.Symbol, alert.TargetPrice))
 }
 
@@ -162,7 +157,7 @@ func (s *TelegramWebhookHandler) handleNaturalAlert(message *tgbotapi.Message) {
 
 	s.alertsRepository.AddAlert(ctx, alert)
 
-	s.sendMessage(message.Chat.ID, fmt.Sprintf("Alert set for %s at $%.2f", alert.Symbol, alert.TargetPrice))
+	s.sendMessage(message.Chat.ID, fmt.Sprintf("Alert set for %s at $%.2f (%v)", alert.Symbol, alert.TargetPrice, alertIntent.Explanation))
 }
 
 func ParseAlertType(s string) (alerts.AlertType, error) {
