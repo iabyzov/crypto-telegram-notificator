@@ -54,6 +54,18 @@ func main() {
 		port = "8000"
 	}
 
+	llmAPIKey := os.Getenv("LLM_API_KEY")
+	if llmAPIKey == "" {
+		log.Fatal("LLM_API_KEY environment variable is not set")
+	}
+
+	llmBaseUrl := os.Getenv("LLM_BASE_URL")
+	if llmBaseUrl == "" {
+		log.Fatal("LLM_BASE_URL enrivonment variable is not set")
+	}
+
+	llmDefaultModel := os.Getenv("LLM_DEFAULT_MODEL")
+
 	// Initialize Firestore client
 	ctx := context.Background()
 	firestoreClient, err := firestore.NewClient(ctx, projectID)
@@ -78,12 +90,13 @@ func main() {
 		log.Fatalf("Failed to parse Redis URL: %v", err)
 	}
 	rdb := redis.NewClient(redisOpt)
+	openAIClient := services.NewOpenAIClient(llmAPIKey, llmBaseUrl, llmDefaultModel)
 
 	// Initialize repositories and services
 	alertsRepository := adapters.NewAlertsFirestoreRepository(firestoreClient)
 	priceService := services.NewPriceService(cmcAPIKey, rdb, 60*time.Second)
 	alertChecker := handlers.NewAlertChecker(alertsRepository, priceService, bot)
-	telegramHandler := handlers.NewTelegramWebhookHandler(bot, alertsRepository)
+	telegramHandler := handlers.NewTelegramWebhookHandler(bot, alertsRepository, openAIClient)
 
 	// Create HTTP server with handlers
 	mux := http.NewServeMux()
