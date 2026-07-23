@@ -4,3 +4,4 @@ TODO.md
 LEARNINGS.md
 .vscode/launch.json
 .DS_Store
+k8s/app/secret.yaml
