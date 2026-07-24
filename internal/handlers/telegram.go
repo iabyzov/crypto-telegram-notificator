@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/iabyzov/coinmarketcap-telegram-bot/internal/domain/alerts"
@@ -29,8 +28,6 @@ type AlertIntentParser interface {
 // TelegramWebhookHandler handles bot logic and price monitoring
 type TelegramWebhookHandler struct {
 	bot               *tgbotapi.BotAPI
-	alerts            map[string][]alerts.PriceAlert
-	alertsMutex       sync.RWMutex
 	alertsRepository  AlertsRepository
 	alertIntentParser AlertIntentParser
 }
