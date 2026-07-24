@@ -8,10 +8,10 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/iabyzov/coinmarketcap-telegram-bot/internal/domain/alerts"
+	llm "github.com/iabyzov/coinmarketcap-telegram-bot/internal/services"
 )
 
 // AlertsRepository defines the interface for alert storage operations
@@ -21,19 +21,22 @@ type AlertsRepository interface {
 	DeleteAlert(ctx context.Context, alert alerts.PriceAlert) error
 }
 
-// TelegramWebhookHandler handles bot logic and price monitoring
-type TelegramWebhookHandler struct {
-	bot              *tgbotapi.BotAPI
-	alerts           map[string][]alerts.PriceAlert
-	alertsMutex      sync.RWMutex
-	alertsRepository AlertsRepository
+type AlertIntentParser interface {
+	ParseAlertIntent(ctx context.Context, text string) (*llm.AlertIntent, error)
 }
 
-func NewTelegramWebhookHandler(tgBotApi *tgbotapi.BotAPI, alertsRepository AlertsRepository) *TelegramWebhookHandler {
+// TelegramWebhookHandler handles bot logic and price monitoring
+type TelegramWebhookHandler struct {
+	bot               *tgbotapi.BotAPI
+	alertsRepository  AlertsRepository
+	alertIntentParser AlertIntentParser
+}
+
+func NewTelegramWebhookHandler(tgBotApi *tgbotapi.BotAPI, alertsRepository AlertsRepository, alertIntentParser AlertIntentParser) *TelegramWebhookHandler {
 	return &TelegramWebhookHandler{
-		bot:              tgBotApi,
-		alerts:           make(map[string][]alerts.PriceAlert),
-		alertsRepository: alertsRepository,
+		bot:               tgBotApi,
+		alertsRepository:  alertsRepository,
+		alertIntentParser: alertIntentParser,
 	}
 }
 
@@ -64,6 +67,8 @@ func (s *TelegramWebhookHandler) handleMessage(message *tgbotapi.Message) {
 		s.handleHelp(message)
 	case "setalert":
 		s.handleSetAlert(message)
+	case "alert":
+		s.handleNaturalAlert(message)
 	case "listalerts":
 		s.handleListAlerts(message)
 	case "deletealert":
@@ -75,6 +80,7 @@ func (s *TelegramWebhookHandler) handleMessage(message *tgbotapi.Message) {
 
 func (s *TelegramWebhookHandler) handleHelp(message *tgbotapi.Message) {
 	helpText := `Available commands:
+/alert I want to set an alert price for Bitcoin when price drops 80K
 /setalert <symbol> <price> <above|below> - Set price alert for cryptocurrency
 /listalerts - List all your active alerts
 /deletealert <alert_id> - Delete a specific alert by ID
@@ -111,11 +117,44 @@ func (s *TelegramWebhookHandler) handleSetAlert(message *tgbotapi.Message) {
 	ctx := context.Background()
 	s.alertsRepository.AddAlert(ctx, alert)
 
-	s.alertsMutex.Lock()
-	s.alerts[alert.Symbol] = append(s.alerts[alert.Symbol], alert)
-	s.alertsMutex.Unlock()
-
 	s.sendMessage(message.Chat.ID, fmt.Sprintf("Alert set for %s at $%.2f", alert.Symbol, alert.TargetPrice))
+}
+
+func (s *TelegramWebhookHandler) handleNaturalAlert(message *tgbotapi.Message) {
+	if s.alertIntentParser == nil {
+		s.sendMessage(message.Chat.ID, "LLM is not configured")
+		return
+	}
+
+	intentMessage := strings.TrimSpace(message.CommandArguments())
+	if len(intentMessage) == 0 {
+		s.sendMessage(message.Chat.ID, "Invalid format. Use: /alert <describe what asset you want to follow>")
+		return
+	}
+
+	ctx := context.Background()
+	alertIntent, err := s.alertIntentParser.ParseAlertIntent(ctx, intentMessage)
+	if err != nil {
+		s.sendMessage(message.Chat.ID, "Was an error on LLM side")
+		log.Printf("Error extracting llm response for this intent: %s for this user: %d %v", intentMessage, message.Chat.ID, err)
+		return
+	}
+
+	if alertIntent.Confidence < 0.5 || alertIntent.Symbol == "" || alertIntent.TargetPrice <= 0 {
+		s.sendMessage(message.Chat.ID, fmt.Sprintf("Alert wasn't created: %v", alertIntent.Explanation))
+		return
+	}
+
+	alert := alerts.PriceAlert{
+		Symbol:      alertIntent.Symbol,
+		TargetPrice: alertIntent.TargetPrice,
+		UserID:      message.Chat.ID,
+		Type:        alertIntent.Type,
+	}
+
+	s.alertsRepository.AddAlert(ctx, alert)
+
+	s.sendMessage(message.Chat.ID, fmt.Sprintf("Alert set for %s at $%.2f (%v)", alert.Symbol, alert.TargetPrice, alertIntent.Explanation))
 }
 
 func ParseAlertType(s string) (alerts.AlertType, error) {

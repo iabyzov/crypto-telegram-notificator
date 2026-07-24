@@ -79,11 +79,22 @@ func main() {
 	}
 	rdb := redis.NewClient(redisOpt)
 
+	var alertLlmParser handlers.AlertIntentParser
+	llmAPIKey := os.Getenv("LLM_API_KEY")
+	llmBaseUrl := os.Getenv("LLM_BASE_URL")
+	llmModel := os.Getenv("LLM_MODEL")
+	if llmAPIKey == "" || llmBaseUrl == "" {
+		log.Printf("llm integration is disabled")
+	} else {
+		log.Printf("llm integration is enabled")
+		alertLlmParser = services.NewOpenAIClient(llmAPIKey, llmBaseUrl, llmModel)
+	}
+
 	// Initialize repositories and services
 	alertsRepository := adapters.NewAlertsFirestoreRepository(firestoreClient)
 	priceService := services.NewPriceService(cmcAPIKey, rdb, 60*time.Second)
 	alertChecker := handlers.NewAlertChecker(alertsRepository, priceService, bot)
-	telegramHandler := handlers.NewTelegramWebhookHandler(bot, alertsRepository)
+	telegramHandler := handlers.NewTelegramWebhookHandler(bot, alertsRepository, alertLlmParser)
 
 	// Create HTTP server with handlers
 	mux := http.NewServeMux()
