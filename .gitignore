@@ -6,3 +6,4 @@ LEARNINGS.md
 .DS_Store
 k8s/app/secret.yaml
 PLAN.md
+plans/*
