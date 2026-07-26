@@ -61,6 +61,10 @@ Direction rules:
 Map coin names to tickers: bitcoin->BTC, ethereum->ETH, solana->SOL, etc.
 If any field cannot be determined, set confidence to 0 and explain in "explanation".`
 
+const chatSystemPrompt = `You answer questions about a cryptocurrency using ONLY the provided context. 
+If the context doesn't contain the answer, say: \"I don't have enough info about <symbol>.\" Cite the source field for each claim in [brackets].
+`
+
 // rawAlertIntent is the JSON wire shape returned by the model. Keeping it
 // separate from AlertIntent lets us validate/normalize before exposing a
 // clean domain-friendly struct to callers.
@@ -149,4 +153,22 @@ func (c *OpenAIClient) ParseAlertIntent(ctx context.Context, text string) (*Aler
 		return nil, fmt.Errorf("unknown direction %q (raw: %s)", raw.Direction, content)
 	}
 	return intent, nil
+}
+
+func (c *OpenAIClient) Chat(ctx context.Context, user string) (string, error) {
+	resp, err := c.client.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
+		Model: c.model,
+		Messages: []openai.ChatCompletionMessage{
+			{Role: openai.ChatMessageRoleSystem, Content: chatSystemPrompt},
+			{Role: openai.ChatMessageRoleUser, Content: user},
+		},
+		Temperature: 0,
+	})
+	if err != nil {
+		return "", fmt.Errorf("llm chat: %w", err)
+	}
+	if len(resp.Choices) == 0 {
+		return "", fmt.Errorf("llm chat: no choices in response")
+	}
+	return resp.Choices[0].Message.Content, nil
 }

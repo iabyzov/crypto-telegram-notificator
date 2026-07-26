@@ -25,18 +25,27 @@ type AlertIntentParser interface {
 	ParseAlertIntent(ctx context.Context, text string) (*llm.AlertIntent, error)
 }
 
+type AlertIngester interface {
+	Ingest(ctx context.Context, symbols []string) (llm.IngestStats, error)
+}
+
 // TelegramWebhookHandler handles bot logic and price monitoring
 type TelegramWebhookHandler struct {
 	bot               *tgbotapi.BotAPI
 	alertsRepository  AlertsRepository
 	alertIntentParser AlertIntentParser
+	research          llm.ResearchService // nil = /ask disabled
+	alertIngester     AlertIngester
 }
 
-func NewTelegramWebhookHandler(tgBotApi *tgbotapi.BotAPI, alertsRepository AlertsRepository, alertIntentParser AlertIntentParser) *TelegramWebhookHandler {
+func NewTelegramWebhookHandler(tgBotApi *tgbotapi.BotAPI, alertsRepository AlertsRepository, alertIntentParser AlertIntentParser, research llm.ResearchService,
+	alertIngester AlertIngester) *TelegramWebhookHandler {
 	return &TelegramWebhookHandler{
 		bot:               tgBotApi,
 		alertsRepository:  alertsRepository,
 		alertIntentParser: alertIntentParser,
+		research:          research,
+		alertIngester:     alertIngester,
 	}
 }
 
@@ -73,6 +82,8 @@ func (s *TelegramWebhookHandler) handleMessage(message *tgbotapi.Message) {
 		s.handleListAlerts(message)
 	case "deletealert":
 		s.handleDeleteAlert(message)
+	case "ask":
+		s.handleAsk(message)
 	default:
 		s.sendMessage(message.Chat.ID, "Unknown command. Type /help for available commands.")
 	}
@@ -84,6 +95,7 @@ func (s *TelegramWebhookHandler) handleHelp(message *tgbotapi.Message) {
 /setalert <symbol> <price> <above|below> - Set price alert for cryptocurrency
 /listalerts - List all your active alerts
 /deletealert <alert_id> - Delete a specific alert by ID
+/ask <symbol> <question> - Ask a question about a cryptocurrency (e.g. /ask BTC what is the max supply?)     
 /help - Show this help message
 
 Example:
@@ -118,6 +130,20 @@ func (s *TelegramWebhookHandler) handleSetAlert(message *tgbotapi.Message) {
 	s.alertsRepository.AddAlert(ctx, alert)
 
 	s.sendMessage(message.Chat.ID, fmt.Sprintf("Alert set for %s at $%.2f", alert.Symbol, alert.TargetPrice))
+
+	if s.alertIngester != nil {
+		go func() {
+			// IMPORTANT: use a fresh context, NOT the request ctx — the handler
+			// returns (and cancels its ctx) before this goroutine finishes.
+			ctx := context.Background()
+			stats, err := s.alertIngester.Ingest(ctx, []string{symbol})
+			if err != nil {
+				log.Printf("async ingest %s: %v", symbol, err)
+				return
+			}
+			log.Printf("async ingest %s: %+v", symbol, stats)
+		}()
+	}
 }
 
 func (s *TelegramWebhookHandler) handleNaturalAlert(message *tgbotapi.Message) {
@@ -155,6 +181,20 @@ func (s *TelegramWebhookHandler) handleNaturalAlert(message *tgbotapi.Message) {
 	s.alertsRepository.AddAlert(ctx, alert)
 
 	s.sendMessage(message.Chat.ID, fmt.Sprintf("Alert set for %s at $%.2f (%v)", alert.Symbol, alert.TargetPrice, alertIntent.Explanation))
+
+	if s.alertIngester != nil {
+		go func() {
+			// IMPORTANT: use a fresh context, NOT the request ctx — the handler
+			// returns (and cancels its ctx) before this goroutine finishes.
+			ctx := context.Background()
+			stats, err := s.alertIngester.Ingest(ctx, []string{alert.Symbol})
+			if err != nil {
+				log.Printf("async ingest %s: %v", alert.Symbol, err)
+				return
+			}
+			log.Printf("async ingest %s: %+v", alert.Symbol, stats)
+		}()
+	}
 }
 
 func ParseAlertType(s string) (alerts.AlertType, error) {
@@ -241,6 +281,39 @@ func (s *TelegramWebhookHandler) handleDeleteAlert(message *tgbotapi.Message) {
 	}
 
 	s.sendMessage(message.Chat.ID, fmt.Sprintf("Alert deleted: %s at $%.2f", alertToDelete.Symbol, alertToDelete.TargetPrice))
+}
+
+func (s *TelegramWebhookHandler) handleAsk(message *tgbotapi.Message) {
+	if s.research == nil {
+		s.sendMessage(message.Chat.ID, "Research is not configured.")
+		return
+	}
+	args := strings.Fields(message.CommandArguments())
+	if len(args) < 2 {
+		s.sendMessage(message.Chat.ID, "Usage: /ask <symbol> <question>\nExample: /ask BTC what is the max supply?")
+		return
+	}
+	symbol := strings.ToUpper(args[0])
+	// question is everything after the symbol (preserve multi-word phrasing).
+	question := strings.TrimSpace(strings.TrimPrefix(message.CommandArguments(), args[0]))
+
+	ctx := context.Background()
+	answer, sources, err := s.research.Research(ctx, symbol, question)
+	if err != nil {
+		s.sendMessage(message.Chat.ID, "Sorry, research failed. Try again later.")
+		log.Printf("research %s: %v", symbol, err)
+		return
+	}
+
+	reply := answer
+	if len(sources) > 0 {
+		var fields []string
+		for _, src := range sources {
+			fields = append(fields, src.Field)
+		}
+		reply += "\n\nSources: " + strings.Join(fields, ", ")
+	}
+	s.sendMessage(message.Chat.ID, reply)
 }
 
 func (s *TelegramWebhookHandler) sendMessage(chatID int64, text string) {

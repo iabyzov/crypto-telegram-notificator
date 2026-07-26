@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - rag
 
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
@@ -57,6 +58,9 @@ jobs:
               -e "s|UPSTASH_REDIS_URL_PLACEHOLDER|${{ secrets.UPSTASH_REDIS_URL }}|g" \
               -e "s|LLM_API_KEY_PLACEHOLDER|${{ secrets.LLM_API_KEY }}|g" \
               -e "s|LLM_BASE_URL_PLACEHOLDER|${{ secrets.LLM_BASE_URL }}|g" \
+              -e "s|EMBEDDINGS_BASE_URL_PLACEHOLDER|${{ secrets.EMBEDDINGS_BASE_URL }}|g" \
+              -e "s|UPSTASH_VECTOR_URL_PLACEHOLDER|${{ secrets.UPSTASH_VECTOR_URL }}|g" \
+              -e "s|UPSTASH_VECTOR_TOKEN_PLACEHOLDER|${{ secrets.UPSTASH_VECTOR_TOKEN }}|g" \
               run-service-with-sidecar.yaml > /tmp/service.yaml
 
       - name: Deploy multi-container service to Cloud Run

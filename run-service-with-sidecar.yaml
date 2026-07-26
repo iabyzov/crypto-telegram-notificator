@@ -29,6 +29,14 @@ spec:
           value: "LLM_BASE_URL_PLACEHOLDER"
         - name: LLM_MODEL
           value: "glm-5.2:cloud"      
+        - name: EMBEDDINGS_MODEL
+          value: "snowflake-arctic-embed2:latest"
+        - name: EMBEDDINGS_BASE_URL
+          value: "EMBEDDINGS_BASE_URL_PLACEHOLDER"
+        - name: UPSTASH_VECTOR_URL
+          value: "UPSTASH_VECTOR_URL_PLACEHOLDER"
+        - name: UPSTASH_VECTOR_TOKEN
+          value: "UPSTASH_VECTOR_TOKEN_PLACEHOLDER"
         name: app
         startupProbe:
           httpGet:

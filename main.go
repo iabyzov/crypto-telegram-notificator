@@ -80,6 +80,7 @@ func main() {
 	rdb := redis.NewClient(redisOpt)
 
 	var alertLlmParser handlers.AlertIntentParser
+	var llmClient *services.OpenAIClient
 	llmAPIKey := os.Getenv("LLM_API_KEY")
 	llmBaseUrl := os.Getenv("LLM_BASE_URL")
 	llmModel := os.Getenv("LLM_MODEL")
@@ -87,14 +88,64 @@ func main() {
 		log.Printf("llm integration is disabled")
 	} else {
 		log.Printf("llm integration is enabled")
-		alertLlmParser = services.NewOpenAIClient(llmAPIKey, llmBaseUrl, llmModel)
+		llmClient = services.NewOpenAIClient(llmAPIKey, llmBaseUrl, llmModel)
+		alertLlmParser = llmClient // non-nil concrete -> non-nil interface
 	}
 
 	// Initialize repositories and services
 	alertsRepository := adapters.NewAlertsFirestoreRepository(firestoreClient)
 	priceService := services.NewPriceService(cmcAPIKey, rdb, 60*time.Second)
 	alertChecker := handlers.NewAlertChecker(alertsRepository, priceService, bot)
-	telegramHandler := handlers.NewTelegramWebhookHandler(bot, alertsRepository, alertLlmParser)
+
+	// --- RAG pipeline (optional, nil-guarded) ---
+	// Embeddings via Ollama /api/embed. Reuses the OpenWebUI key by default.
+	var emb services.EmbeddingsClient
+	embedBase := os.Getenv("EMBEDDINGS_BASE_URL")
+	embedModel := os.Getenv("EMBEDDINGS_MODEL")
+	embedKey := os.Getenv("EMBEDDINGS_API_KEY")
+	if embedKey == "" {
+		embedKey = llmAPIKey // same OpenWebUI key as chat by default
+	}
+	if embedBase == "" || embedModel == "" {
+		log.Printf("embeddings disabled")
+	} else if e, err := services.NewOllamaEmbeddings(embedBase, embedKey, embedModel); err != nil {
+		log.Printf("embeddings disabled: %v", err)
+	} else {
+		emb = e
+		log.Printf("embeddings enabled (%s)", embedModel)
+	}
+
+	// Vector store (Upstash Vector). nil when URL unset.
+	var store adapters.VectorStore
+	if vecURL := os.Getenv("UPSTASH_VECTOR_URL"); vecURL != "" {
+		store = adapters.NewUpstashVectorStore(vecURL, os.Getenv("UPSTASH_VECTOR_TOKEN"))
+		log.Printf("vector store enabled")
+	} else {
+		log.Printf("vector store disabled")
+	}
+
+	// Ingester: ingest asset info on alert creation. Needs embeddings + store.
+	var ing *services.Ingester
+	var ingester handlers.AlertIngester
+	if emb != nil && store != nil {
+		infoSvc := services.NewAssetInfoService(cmcAPIKey, rdb, 24*time.Hour)
+		ing = services.NewIngester(infoSvc, emb, store)
+		ingester = ing // non-nil concrete -> non-nil interface
+		log.Printf("ingester enabled")
+	} else {
+		log.Printf("ingester disabled")
+	}
+
+	// RAG service: grounded Q&A. Needs llm + embeddings + store; ingester optional.
+	var research services.ResearchService
+	if llmClient != nil && emb != nil && store != nil {
+		research = services.NewRAGService(emb, store, llmClient, ing)
+		log.Printf("rag enabled")
+	} else {
+		log.Printf("rag disabled")
+	}
+
+	telegramHandler := handlers.NewTelegramWebhookHandler(bot, alertsRepository, alertLlmParser, research, ingester)
 
 	// Create HTTP server with handlers
 	mux := http.NewServeMux()
