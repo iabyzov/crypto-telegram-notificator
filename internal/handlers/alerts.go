@@ -79,7 +79,7 @@ func (ac *AlertChecker) CheckAlerts(ctx context.Context) error {
 	for _, symbolAlerts := range alertsBySymbol {
 		// Check each alert for this symbol
 		for _, alert := range symbolAlerts {
-			if ac.isAlertTriggered(alert, prices[alert.Symbol]) {
+			if alert.IsTriggeredBy(prices[alert.Symbol]) {
 				triggeredAlerts = append(triggeredAlerts, alert)
 			}
 		}
@@ -114,37 +114,18 @@ func (ac *AlertChecker) CheckAlerts(ctx context.Context) error {
 	return nil
 }
 
-// isAlertTriggered checks if an alert condition is met
-func (ac *AlertChecker) isAlertTriggered(alert alerts.PriceAlert, currentPrice float64) bool {
-	switch alert.Type {
-	case alerts.More:
-		return currentPrice >= alert.TargetPrice
-	case alerts.Less:
-		return currentPrice <= alert.TargetPrice
-	default:
-		return false
-	}
-}
-
 // sendNotification sends a Telegram notification to the user
 func (ac *AlertChecker) sendNotification(alert alerts.PriceAlert, currentPrice float64) error {
-	var message string
-	switch alert.Type {
-	case alerts.More:
-		message = fmt.Sprintf(
-			"🚀 Alert triggered for %s!\nCurrent price: $%.2f\nTarget price: $%.2f (above)\nThe price has reached or exceeded your target!",
-			alert.Symbol,
-			currentPrice,
-			alert.TargetPrice,
-		)
-	case alerts.Less:
-		message = fmt.Sprintf(
-			"📉 Alert triggered for %s!\nCurrent price: $%.2f\nTarget price: $%.2f (below)\nThe price has reached or dropped below your target!",
-			alert.Symbol,
-			currentPrice,
-			alert.TargetPrice,
-		)
-	}
+	presentation := alertTypePresentationFor(alert.Type)
+	message := fmt.Sprintf(
+		"%s Alert triggered for %s!\nCurrent price: $%.2f\nTarget price: $%.2f (%s)\nThe price has %s!",
+		presentation.emoji,
+		alert.Symbol,
+		currentPrice,
+		alert.TargetPrice,
+		alert.Type,
+		presentation.triggerPhrase,
+	)
 
 	msg := tgbotapi.NewMessage(alert.UserID, message)
 	if _, err := ac.bot.Send(msg); err != nil {

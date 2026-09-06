@@ -4,7 +4,7 @@ A Telegram bot that monitors cryptocurrency prices and sends alerts when price t
 
 ## Features
 
-- Set price alerts for cryptocurrencies (above/below target prices)
+- Set price alerts for cryptocurrencies (More/Less target prices)
 - Automated price monitoring via scheduled Cloud Function
 - Real-time notifications via Telegram
 - Data persistence using Google Cloud Firestore
@@ -185,9 +185,9 @@ The schedule `*/5 * * * *` runs the job every 5 minutes.
 Users can interact with the bot using these commands:
 
 - `/start` or `/help` - Show help message
-- `/setalert <symbol> <price> <above|below>` - Set a price alert
-  - Example: `/setalert BTC 50000 above` - Alert when Bitcoin goes above $50,000
-  - Example: `/setalert ETH 2000 below` - Alert when Ethereum goes below $2,000
+- `/setalert <symbol> <price> <more|less>` - Set a price alert
+  - Example: `/setalert BTC 50000 more` - Alert when Bitcoin rises to or above $50,000
+  - Example: `/setalert ETH 2000 less` - Alert when Ethereum drops to or below $2,000
 - `/listalerts` - View all your active alerts with their IDs
 - `/deletealert <alert_id>` - Remove a specific alert using its ID
   - Example: `/deletealert abc123def456` - Delete the alert with ID abc123def456
@@ -195,13 +195,13 @@ Users can interact with the bot using these commands:
 ## How It Works
 
 1. **Setting an Alert**: 
-   - User sends `/setalert BTC 50000 above` command
+   - User sends `/setalert BTC 50000 more` command
    - Bot stores the alert in Firestore
    - User receives confirmation with alert details
 
 2. **Managing Alerts**:
    - User can view all their active alerts with `/listalerts`
-   - Each alert is displayed with a unique ID, symbol, target price, and type (above/below)
+   - Each alert is displayed with a unique ID, symbol, target price, and AlertType (More/Less)
    - User can delete unwanted alerts using `/deletealert <alert_id>`
    - The system ensures users can only view and delete their own alerts
 
@@ -217,7 +217,7 @@ Users can interact with the bot using these commands:
 4. **Notifications**:
    - Users receive a message when their alert is triggered
    - Message includes current price and target price
-   - Different emojis for "above" (🚀) and "below" (📉) alerts
+   - Different emojis for More (🚀) and Less (📉) alerts
 
 ## Project Structure
 

@@ -50,7 +50,7 @@ gcloud run deploy crypto-telegram-notificator \
 1. Cloud Scheduler → `GET /check-alerts`
 2. `AlertChecker.CheckAlerts()` fetches all alerts from Firestore
 3. Groups by symbol → single batch request to CoinMarketCap API
-4. Compares each alert's target price against current price using `AlertType` (More=above, Less=below)
+4. Compares each alert's target price against current price using the domain `PriceAlert.IsTriggeredBy` (More: at-or-above, Less: at-or-below)
 5. Sends Telegram notification → deletes triggered alert from Firestore
 
 ## Required Environment Variables
@@ -68,3 +68,17 @@ gcloud run deploy crypto-telegram-notificator \
 - Service config with GMP sidecar: `run-service-with-sidecar.yaml`
 - IAM policy for public access: `policy.yaml`
 - `run-service-with-sidecar.yaml` contains hardcoded credentials — do not commit real values
+
+## Agent skills
+
+### Issue tracker
+
+Issues live as GitHub issues in `iabyzov/crypto-telegram-notificator`, managed via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default five-label vocabulary; each label string equals its role name (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: root `CONTEXT.md` plus `docs/adr/`, created lazily by `/domain-modeling`. See `docs/agents/domain.md`.

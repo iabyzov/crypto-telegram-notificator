@@ -81,13 +81,13 @@ func (s *TelegramWebhookHandler) handleMessage(message *tgbotapi.Message) {
 func (s *TelegramWebhookHandler) handleHelp(message *tgbotapi.Message) {
 	helpText := `Available commands:
 /alert I want to set an alert price for Bitcoin when price drops 80K
-/setalert <symbol> <price> <above|below> - Set price alert for cryptocurrency
+/setalert <symbol> <price> <more|less> - Set price alert for cryptocurrency
 /listalerts - List all your active alerts
 /deletealert <alert_id> - Delete a specific alert by ID
 /help - Show this help message
 
 Example:
-/setalert BTC 50000 above - Alert when Bitcoin price exceeds $50,000`
+/setalert BTC 50000 more - Alert when Bitcoin price rises to or above $50,000`
 
 	s.sendMessage(message.Chat.ID, helpText)
 }
@@ -96,7 +96,7 @@ func (s *TelegramWebhookHandler) handleSetAlert(message *tgbotapi.Message) {
 
 	args := strings.Fields(message.CommandArguments())
 	if len(args) != 3 {
-		s.sendMessage(message.Chat.ID, "Invalid format. Use: /setalert <symbol> <price> <above/below>")
+		s.sendMessage(message.Chat.ID, "Invalid format. Use: /setalert <symbol> <price> <more|less>")
 		return
 	}
 	symbol := strings.ToUpper(args[0])
@@ -105,7 +105,11 @@ func (s *TelegramWebhookHandler) handleSetAlert(message *tgbotapi.Message) {
 		s.sendMessage(message.Chat.ID, "Invalid price value. Please enter a valid number.")
 		return
 	}
-	alertType, _ := ParseAlertType(args[2])
+	alertType, err := alerts.ParseAlertType(args[2])
+	if err != nil {
+		s.sendMessage(message.Chat.ID, fmt.Sprintf("Invalid alert type %q. Use more or less: /setalert <symbol> <price> <more|less>", args[2]))
+		return
+	}
 
 	alert := alerts.PriceAlert{
 		Symbol:      symbol,
@@ -157,15 +161,6 @@ func (s *TelegramWebhookHandler) handleNaturalAlert(message *tgbotapi.Message) {
 	s.sendMessage(message.Chat.ID, fmt.Sprintf("Alert set for %s at $%.2f (%v)", alert.Symbol, alert.TargetPrice, alertIntent.Explanation))
 }
 
-func ParseAlertType(s string) (alerts.AlertType, error) {
-	for i := alerts.More; i <= alerts.Less; i++ {
-		if strings.EqualFold(s, i.String()) {
-			return i, nil
-		}
-	}
-	return 0, fmt.Errorf("invalid number: %s", s)
-}
-
 func (s *TelegramWebhookHandler) handleListAlerts(message *tgbotapi.Message) {
 	ctx := context.Background()
 	userAlerts, err := s.alertsRepository.GetAlertsByUserID(ctx, message.Chat.ID)
@@ -188,14 +183,9 @@ func (s *TelegramWebhookHandler) formatAlertsList(userAlerts []alerts.PriceAlert
 	var response strings.Builder
 	response.WriteString("Your active alerts:\n\n")
 	for i, alert := range userAlerts {
-		typeStr := "above"
-		emoji := "🚀"
-		if alert.Type == alerts.Less {
-			typeStr = "below"
-			emoji = "📉"
-		}
+		presentation := alertTypePresentationFor(alert.Type)
 		response.WriteString(fmt.Sprintf("%d. %s %s %s at $%.2f\n   ID: %s\n\n",
-			i+1, emoji, alert.Symbol, typeStr, alert.TargetPrice, alert.Id))
+			i+1, presentation.emoji, alert.Symbol, alert.Type, alert.TargetPrice, alert.Id))
 	}
 	response.WriteString("Use /deletealert <ID> to remove an alert.")
 	return response.String()

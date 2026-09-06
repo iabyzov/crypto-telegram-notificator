@@ -27,7 +27,7 @@ Implemented a scheduled Google Cloud Function that checks cryptocurrency price a
   - Fetches current price for each symbol
   - Checks if alert conditions are met
   - Sends notifications for triggered alerts
-- `isAlertTriggered()` checks if price meets alert condition (above/below)
+- Domain `PriceAlert.IsTriggeredBy()` checks if price meets alert condition (More at-or-above, Less at-or-below)
 - `sendNotification()` sends formatted Telegram messages with emojis
 
 ### 4. Alert Job Package
@@ -76,7 +76,7 @@ AlertChecker Service
 
 - ✅ Fetches all alerts from Firestore
 - ✅ Groups by symbol to minimize API calls
-- ✅ Checks both "above" and "below" alert types
+- ✅ Checks both More and Less alert types
 - ✅ Sends formatted notifications with emojis
 - ✅ Comprehensive error handling and logging
 - ✅ Runs every 5 minutes via Cloud Scheduler

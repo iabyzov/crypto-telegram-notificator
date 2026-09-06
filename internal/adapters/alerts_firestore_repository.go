@@ -31,13 +31,10 @@ func mapToFirestoreModel(alert alerts.PriceAlert) AlertFirestoreModel {
 
 // mapToDomainModel converts a Firestore model to a domain PriceAlert
 func mapToDomainModel(model AlertFirestoreModel, docID string) (alerts.PriceAlert, error) {
-	var alertType alerts.AlertType
-	switch model.Type {
-	case "More":
-		alertType = alerts.More
-	case "Less":
-		alertType = alerts.Less
-	default:
+	// Unknown type strings default to More so existing documents keep
+	// loading; the error return stays dormant, matching today's behavior.
+	alertType, err := alerts.ParseAlertType(model.Type)
+	if err != nil {
 		alertType = alerts.More
 	}
 
