@@ -83,6 +83,11 @@ func main() {
 	llmAPIKey := os.Getenv("LLM_API_KEY")
 	llmBaseUrl := os.Getenv("LLM_BASE_URL")
 	llmModel := os.Getenv("LLM_MODEL")
+	webhookSecret := os.Getenv("TELEGRAM_WEBHOOK_SECRET")
+	if webhookSecret == "" {
+		log.Printf("WARNING: TELEGRAM_WEBHOOK_SECRET is not set; /webhook will accept requests from anyone. " +
+			"Set it and pass it to setWebhook's secret_token to enable verification.")
+	}
 	if llmAPIKey == "" || llmBaseUrl == "" {
 		log.Printf("llm integration is disabled")
 	} else {
@@ -94,7 +99,7 @@ func main() {
 	alertsRepository := adapters.NewAlertsFirestoreRepository(firestoreClient)
 	priceService := services.NewPriceService(cmcAPIKey, rdb, 60*time.Second)
 	alertChecker := handlers.NewAlertChecker(alertsRepository, priceService, bot)
-	telegramHandler := handlers.NewTelegramWebhookHandler(bot, alertsRepository, alertLlmParser)
+	telegramHandler := handlers.NewTelegramWebhookHandler(bot, alertsRepository, alertLlmParser, webhookSecret)
 
 	// Create HTTP server with handlers
 	mux := http.NewServeMux()

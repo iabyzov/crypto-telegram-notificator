@@ -92,11 +92,18 @@ func (s *stubTelegramTransport) sentTexts() []string {
 	return texts
 }
 
-// newTestHandler wires a TelegramWebhookHandler against a fake repository and a
-// stub Telegram transport. The transport is injected through the library's
-// HTTPClient seam (NewBotAPIWithClient), so sendMessage goes through the real
-// BotAPI code path and its output is observable.
+// newTestHandler wires a handler with no webhook secret, for command tests.
 func newTestHandler(t *testing.T) (*TelegramWebhookHandler, *fakeAlertsRepository, *stubTelegramTransport) {
+	t.Helper()
+	return newTestHandlerWithWebhookSecret(t, "")
+}
+
+// newTestHandlerWithWebhookSecret wires a TelegramWebhookHandler against a
+// fake repository and a stub Telegram transport, with the given webhook
+// secret. The transport is injected through the library's HTTPClient seam
+// (NewBotAPIWithClient), so sendMessage goes through the real BotAPI code
+// path and its output is observable.
+func newTestHandlerWithWebhookSecret(t *testing.T, webhookSecret string) (*TelegramWebhookHandler, *fakeAlertsRepository, *stubTelegramTransport) {
 	t.Helper()
 
 	transport := &stubTelegramTransport{}
@@ -106,7 +113,7 @@ func newTestHandler(t *testing.T) (*TelegramWebhookHandler, *fakeAlertsRepositor
 	}
 
 	repo := &fakeAlertsRepository{}
-	handler := NewTelegramWebhookHandler(bot, repo, nil)
+	handler := NewTelegramWebhookHandler(bot, repo, nil, webhookSecret)
 	return handler, repo, transport
 }
 
