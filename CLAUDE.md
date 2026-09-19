@@ -53,14 +53,9 @@ gcloud run deploy crypto-telegram-notificator \
 4. Compares each alert's target price against current price using the domain `PriceAlert.IsTriggeredBy` (More: at-or-above, Less: at-or-below)
 5. Sends Telegram notification → deletes triggered alert from Firestore
 
-## Required Environment Variables
+## Environment Variables
 
-| Variable | Purpose |
-|---|---|
-| `TELEGRAM_BOT_TOKEN` | Telegram bot auth token |
-| `CMC_API_KEY` | CoinMarketCap API key |
-| `GCP_PROJECT_ID` | Google Cloud project ID |
-| `PORT` | HTTP server port (defaults to 8080) |
+Documented in README.md — see the "Environment Variables" section for the required and optional variables, including the optional `TELEGRAM_WEBHOOK_SECRET` for webhook secret-token verification.
 
 ## Deployment Notes
 
