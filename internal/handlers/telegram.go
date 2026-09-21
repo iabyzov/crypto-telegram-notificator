@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -30,19 +31,27 @@ type TelegramWebhookHandler struct {
 	bot               *tgbotapi.BotAPI
 	alertsRepository  AlertsRepository
 	alertIntentParser AlertIntentParser
+	// webhookSecret, when non-empty, must match the X-Telegram-Bot-Api-Secret-Token
+	// header of every request; empty means the check is skipped.
+	webhookSecret string
 }
 
-func NewTelegramWebhookHandler(tgBotApi *tgbotapi.BotAPI, alertsRepository AlertsRepository, alertIntentParser AlertIntentParser) *TelegramWebhookHandler {
+func NewTelegramWebhookHandler(tgBotApi *tgbotapi.BotAPI, alertsRepository AlertsRepository, alertIntentParser AlertIntentParser, webhookSecret string) *TelegramWebhookHandler {
 	return &TelegramWebhookHandler{
 		bot:               tgBotApi,
 		alertsRepository:  alertsRepository,
 		alertIntentParser: alertIntentParser,
+		webhookSecret:     webhookSecret,
 	}
 }
 
 func (s *TelegramWebhookHandler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "invalid method", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.authorizedWebhookRequest(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 	var update tgbotapi.Update
@@ -54,6 +63,19 @@ func (s *TelegramWebhookHandler) HandleWebhook(w http.ResponseWriter, r *http.Re
 		go s.handleMessage(update.Message)
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+// authorizedWebhookRequest reports whether the request carries the Telegram
+// secret token. The compare is constant-time so an attacker cannot shave
+// guesses off the response latency.
+func (s *TelegramWebhookHandler) authorizedWebhookRequest(r *http.Request) bool {
+	if s.webhookSecret == "" {
+		return true
+	}
+	return subtle.ConstantTimeCompare(
+		[]byte(r.Header.Get("X-Telegram-Bot-Api-Secret-Token")),
+		[]byte(s.webhookSecret),
+	) == 1
 }
 
 func (s *TelegramWebhookHandler) handleMessage(message *tgbotapi.Message) {

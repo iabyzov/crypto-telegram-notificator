@@ -25,11 +25,12 @@ The application is deployed as a Google Cloud Run service with two HTTP endpoint
 
 ## Environment Variables
 
-Both functions require the following environment variables:
+The service uses the following environment variables:
 
 - `TELEGRAM_BOT_TOKEN`: Your Telegram bot token
 - `CMC_API_KEY`: Your CoinMarketCap API key
 - `GCP_PROJECT_ID`: Your Google Cloud Project ID
+- `TELEGRAM_WEBHOOK_SECRET` (optional): Secret token Telegram sends in the `X-Telegram-Bot-Api-Secret-Token` header on every webhook request. When set, requests without a matching header are rejected with 401. When unset, the check is skipped (a startup warning is logged) - set it and pass the same value to `setWebhook`'s `secret_token` to enable verification.
 
 ## Deployment
 
@@ -122,6 +123,7 @@ echo "Also add TELEGRAM_BOT_TOKEN and CMC_API_KEY as GitHub Secrets."
 | `WIF_SERVICE_ACCOUNT` | Service account email (from setup output) |
 | `TELEGRAM_BOT_TOKEN` | Telegram bot token |
 | `CMC_API_KEY` | CoinMarketCap API key |
+| `TELEGRAM_WEBHOOK_SECRET` | Secret token for the Telegram webhook (optional; pass the same value to `setWebhook`'s `secret_token`) |
 
 ### 1. Deploy to Google Cloud Run (manual)
 
@@ -157,10 +159,11 @@ After deployment, note the service URL (e.g., `https://crypto-telegram-notificat
 ### 2. Set the Telegram Webhook
 
 Configure Telegram to send updates to your Cloud Run service:
-
 ```bash
-curl -X POST "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/setWebhook?url=<YOUR_CLOUD_RUN_URL>/webhook"
+curl -X POST "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/setWebhook?url=<YOUR_CLOUD_RUN_URL>/webhook&secret_token=<TELEGRAM_WEBHOOK_SECRET>"
 ```
+
+`secret_token` makes Telegram include the same value in the `X-Telegram-Bot-Api-Secret-Token` header of every webhook request. The service compares it (in constant time) against the `TELEGRAM_WEBHOOK_SECRET` environment variable and rejects requests without a match with 401. Generate one with, e.g., `openssl rand -hex 32`. For verification to be active, the service must be deployed with `TELEGRAM_WEBHOOK_SECRET` set to the same value (for manual deploys, add it to the `--set-env-vars` list).
 
 ### 3. Create a Cloud Scheduler Job
 
