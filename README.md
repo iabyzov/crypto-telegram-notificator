@@ -36,7 +36,7 @@ The service uses the following environment variables:
 
 ### CI/CD with GitHub Actions
 
-The project includes a GitHub Actions workflow that automatically builds and deploys to Cloud Run on every push to `main`.
+The project includes two GitHub Actions workflows. The **CI** workflow builds, vets, and tests the code on every push to `main` and on every pull request targeting `main`. The **Build and Deploy to Cloud Run** workflow then builds and deploys the service to Cloud Run, but only after a push-triggered CI run on `main` completes successfully — it deploys the exact commit that CI validated.
 
 #### One-time setup: Workload Identity Federation
 
