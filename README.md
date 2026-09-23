@@ -5,7 +5,7 @@ A Telegram bot that monitors cryptocurrency prices and sends alerts when price t
 ## Features
 
 - Set price alerts for cryptocurrencies (More/Less target prices)
-- Automated price monitoring via scheduled Cloud Function
+- Automated price monitoring via Cloud Scheduler
 - Real-time notifications via Telegram
 - Data persistence using Google Cloud Firestore
 
@@ -21,7 +21,7 @@ The application is deployed as a Google Cloud Run service with two HTTP endpoint
 - Google Cloud Platform account
 - Telegram Bot Token (get from [@BotFather](https://t.me/botfather))
 - CoinMarketCap API Key (get from [CoinMarketCap API](https://coinmarketcap.com/api/))
-- Go 1.22.3 or later
+- Go 1.24 or later
 
 ## Environment Variables
 
@@ -197,7 +197,7 @@ Users can interact with the bot using these commands:
 
 ## How It Works
 
-1. **Setting an Alert**: 
+1. **Setting an Alert**:
    - User sends `/setalert BTC 50000 more` command
    - Bot stores the alert in Firestore
    - User receives confirmation with alert details
@@ -284,7 +284,7 @@ Monitor your Cloud Run service in the Google Cloud Console:
 ### Alerts not triggering
 - Check Cloud Scheduler job is enabled and running
 - Verify environment variables are set correctly
-- Check Cloud Function logs for errors
+- Check Cloud Run logs for errors
 - Ensure Firestore has the correct collection name ("alerts")
 
 ### Price fetching fails
