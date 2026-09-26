@@ -133,17 +133,26 @@ func (s *TelegramWebhookHandler) handleSetAlert(message *tgbotapi.Message) {
 		return
 	}
 
+	ctx := context.Background()
+	s.createAlert(ctx, message.Chat.ID, symbol, price, alertType, "")
+}
+
+// createAlert is the shared creation flow for /setalert and /alert: build a
+// PriceAlert, persist it, and confirm to the user. A non-empty explanation
+// (from the LLM intent) is appended to the confirmation message.
+func (s *TelegramWebhookHandler) createAlert(ctx context.Context, chatID int64, symbol string, targetPrice float64, alertType alerts.AlertType, explanation string) {
 	alert := alerts.PriceAlert{
 		Symbol:      symbol,
-		TargetPrice: price, // parsed threshold
-		UserID:      message.Chat.ID,
+		TargetPrice: targetPrice,
+		UserID:      chatID,
 		Type:        alertType,
 	}
-
-	ctx := context.Background()
 	s.alertsRepository.AddAlert(ctx, alert)
-
-	s.sendMessage(message.Chat.ID, fmt.Sprintf("Alert set for %s at $%.2f", alert.Symbol, alert.TargetPrice))
+	confirmation := fmt.Sprintf("Alert set for %s at $%.2f", alert.Symbol, alert.TargetPrice)
+	if explanation != "" {
+		confirmation = fmt.Sprintf("%s (%v)", confirmation, explanation)
+	}
+	s.sendMessage(chatID, confirmation)
 }
 
 func (s *TelegramWebhookHandler) handleNaturalAlert(message *tgbotapi.Message) {
@@ -171,16 +180,7 @@ func (s *TelegramWebhookHandler) handleNaturalAlert(message *tgbotapi.Message) {
 		return
 	}
 
-	alert := alerts.PriceAlert{
-		Symbol:      alertIntent.Symbol,
-		TargetPrice: alertIntent.TargetPrice,
-		UserID:      message.Chat.ID,
-		Type:        alertIntent.Type,
-	}
-
-	s.alertsRepository.AddAlert(ctx, alert)
-
-	s.sendMessage(message.Chat.ID, fmt.Sprintf("Alert set for %s at $%.2f (%v)", alert.Symbol, alert.TargetPrice, alertIntent.Explanation))
+	s.createAlert(ctx, message.Chat.ID, alertIntent.Symbol, alertIntent.TargetPrice, alertIntent.Type, alertIntent.Explanation)
 }
 
 func (s *TelegramWebhookHandler) handleListAlerts(message *tgbotapi.Message) {

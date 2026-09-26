@@ -191,6 +191,8 @@ Users can interact with the bot using these commands:
 - `/setalert <symbol> <price> <more|less>` - Set a price alert
   - Example: `/setalert BTC 50000 more` - Alert when Bitcoin rises to or above $50,000
   - Example: `/setalert ETH 2000 less` - Alert when Ethereum drops to or below $2,000
+- `/alert <natural language description>` - Set a price alert by describing it in plain language; an LLM extracts the symbol, price, and direction
+  - Example: `/alert I want to set an alert price for Bitcoin when price drops 80K`
 - `/listalerts` - View all your active alerts with their IDs
 - `/deletealert <alert_id>` - Remove a specific alert using its ID
   - Example: `/deletealert abc123def456` - Delete the alert with ID abc123def456
