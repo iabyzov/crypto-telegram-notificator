@@ -41,7 +41,7 @@ gcloud run deploy crypto-telegram-notificator \
 - `internal/handlers/` — two handlers: `TelegramWebhookHandler` (incoming bot commands) and `AlertChecker` (scheduled price evaluation)
 
 **HTTP endpoints registered in `main.go`:**
-- `POST /webhook` — receives Telegram updates; dispatches `/setalert`, `/listalerts`, `/deletealert`, `/help`, `/start`
+- `POST /webhook` — receives Telegram updates; dispatches `/setalert`, `/alert`, `/listalerts`, `/deletealert`, `/help`, `/start`
 - `GET /check-alerts` — triggered by Cloud Scheduler every 5 min; checks all alerts and fires Telegram notifications for triggered ones, then deletes them
 - `GET /health` — health check
 - `:8080/metrics` — Prometheus metrics (separate goroutine)
