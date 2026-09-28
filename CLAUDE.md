@@ -96,5 +96,5 @@ flows). If tests fail or a step was skipped, say so plainly with the output.
 
 ## Validation pipeline (no-mistakes)
 
-Ship through the gate instead of `git push origin`: `git push no-mistakes <branch>` (or the /no-mistakes skill). Then **review the PR - its evidence + risk assessment - not the raw diff.
+Ship through the gate instead of `git push origin`: `git push no-mistakes <branch>` (or the /no-mistakes skill). Then **review the PR - its evidence + risk assessment - not the raw diff**.
 
