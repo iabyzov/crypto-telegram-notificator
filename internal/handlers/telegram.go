@@ -18,6 +18,7 @@ import (
 // AlertsRepository defines the interface for alert storage operations
 type AlertsRepository interface {
 	AddAlert(ctx context.Context, alert alerts.PriceAlert)
+	GetAllAlerts(ctx context.Context) ([]alerts.PriceAlert, error)
 	GetAlertsByUserID(ctx context.Context, userID int64) ([]alerts.PriceAlert, error)
 	DeleteAlert(ctx context.Context, alert alerts.PriceAlert) error
 }

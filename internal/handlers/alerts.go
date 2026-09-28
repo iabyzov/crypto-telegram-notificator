@@ -8,7 +8,6 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"github.com/iabyzov/coinmarketcap-telegram-bot/internal/adapters"
 	"github.com/iabyzov/coinmarketcap-telegram-bot/internal/domain/alerts"
 	"github.com/iabyzov/coinmarketcap-telegram-bot/internal/services"
 	"github.com/prometheus/client_golang/prometheus"
@@ -23,14 +22,14 @@ var checkAlertDuration = promauto.NewHistogram(prometheus.HistogramOpts{
 
 // AlertChecker handles checking alerts and sending notifications
 type AlertChecker struct {
-	alertsRepository *adapters.AlertsFirestoreRepository
+	alertsRepository AlertsRepository
 	priceService     *services.PriceService
 	bot              *tgbotapi.BotAPI
 }
 
 // NewAlertChecker creates a new AlertChecker
 func NewAlertChecker(
-	alertsRepository *adapters.AlertsFirestoreRepository,
+	alertsRepository AlertsRepository,
 	priceService *services.PriceService,
 	bot *tgbotapi.BotAPI,
 ) *AlertChecker {
