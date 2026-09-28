@@ -77,3 +77,24 @@ Default five-label vocabulary; each label string equals its role name (`needs-tr
 ### Domain docs
 
 Single-context: root `CONTEXT.md` plus `docs/adr/`, created lazily by `/domain-modeling`. See `docs/agents/domain.md`.
+
+## TDD is mandatory
+
+Every change follows **failing test first → implement → verify**:
+1. Write the test(s) that capture the desired behavior and watch them **fail** (red).
+2. Implement the minimum to make them pass.
+3. Run the suite + typecheck and confirm green.
+
+Don't write implementation before a failing test exists. When fixing a bug, reproduce it with a
+failing test first.
+
+## Verify before claiming "done"
+
+Never report something as working without running it. "Done" means: relevant tests green,
+typecheck clean, and — for user-facing flows — exercised end to end (e.g. Playwright for web
+flows). If tests fail or a step was skipped, say so plainly with the output.
+
+## Validation pipeline (no-mistakes)
+
+Ship through the gate instead of `git push origin`: `git push no-mistakes <branch>` (or the /no-mistakes skill). Then **review the PR - its evidence + risk assessment - not the raw diff**.
+

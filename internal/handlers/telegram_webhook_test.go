@@ -5,16 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 )
-
-// newWebhookHandler wires a TelegramWebhookHandler with the given webhook
-// secret against the stub Telegram transport.
-func newWebhookHandler(t *testing.T, webhookSecret string) (*TelegramWebhookHandler, *stubTelegramTransport) {
-	t.Helper()
-	handler, _, transport := newTestHandlerWithWebhookSecret(t, webhookSecret)
-	return handler, transport
-}
 
 // newWebhookRequest builds a POST /webhook request carrying a Telegram update
 // with the given secret-token header, as Telegram would deliver it.
@@ -25,22 +16,6 @@ func newWebhookRequest(secretToken string) *http.Request {
 		req.Header.Set("X-Telegram-Bot-Api-Secret-Token", secretToken)
 	}
 	return req
-}
-
-// waitForSend polls the stub transport until at least one message is sent or
-// the deadline passes; HandleWebhook dispatches handling in a goroutine.
-func waitForSend(t *testing.T, transport *stubTelegramTransport) bool {
-	t.Helper()
-	// Rejected requests are answered synchronously and never dispatched, so a
-	// short window is enough to prove their absence.
-	deadline := time.Now().Add(50 * time.Millisecond)
-	for time.Now().Before(deadline) {
-		if len(transport.sentTexts()) > 0 {
-			return true
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	return false
 }
 
 func TestHandleWebhookSecret(t *testing.T) {
@@ -83,18 +58,18 @@ func TestHandleWebhookSecret(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			handler, transport := newWebhookHandler(t, tt.webhookSecret)
+			h := newTestHarnessWithWebhookSecret(t, tt.webhookSecret)
 
 			recorder := httptest.NewRecorder()
-			handler.HandleWebhook(recorder, newWebhookRequest(tt.headerToken))
+			h.handler.HandleWebhook(recorder, newWebhookRequest(tt.headerToken))
 
 			if recorder.Code != tt.wantStatus {
 				t.Errorf("status = %d, want %d", recorder.Code, tt.wantStatus)
 			}
 
-			handled := waitForSend(t, transport)
+			handled := h.waitForSend()
 			if handled != tt.wantHandled {
-				t.Errorf("message dispatched = %v, want %v (sent texts: %v)", handled, tt.wantHandled, transport.sentTexts())
+				t.Errorf("message dispatched = %v, want %v (sent texts: %v)", handled, tt.wantHandled, h.sentTexts())
 			}
 		})
 	}
