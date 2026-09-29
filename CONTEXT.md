@@ -5,7 +5,7 @@ A Telegram bot that monitors cryptocurrency prices (CoinMarketCap) and notifies 
 ## Language
 
 **PriceAlert**:
-A user's registered condition: a symbol, a target price, and an AlertType. Fires once, then is deleted.
+A user's registered condition: a symbol, a target price, and an AlertType. One-shot: fires when triggered, then is deleted once Delivery succeeds.
 _Avoid_: watch, rule, alert rule
 
 **AlertType**:
