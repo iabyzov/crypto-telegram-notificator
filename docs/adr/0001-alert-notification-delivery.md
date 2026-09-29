@@ -49,6 +49,7 @@ dead-lettering (#29) can control the 1-hour window deterministically.
   alert volumes.
 - `AlertsRepository` grows `MarkDeliveryFailed`; every implementation
   (Firestore, test fakes) must persist the timestamp in place, without
-  rewriting the rest of the document (Firestore `MergeAll`).
+  rewriting the rest of the document (a Firestore field `Update`, which
+  returns `NotFound` instead of recreating a concurrently deleted document).
 - Old Firestore documents without `delivery_failed_at` keep loading: the field
   is `omitempty` and maps zero to "never failed".

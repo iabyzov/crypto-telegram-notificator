@@ -25,7 +25,7 @@ type AlertFirestoreModel struct {
 // mapToFirestoreModel converts a domain PriceAlert to a Firestore model.
 // DeliveryFailedAt is intentionally not mapped: this mapper only creates
 // fresh alerts via AddAlert; failure stamps are written in place by
-// MarkDeliveryFailed (MergeAll), never by a full-document rewrite.
+// MarkDeliveryFailed, never by a full-document rewrite.
 func mapToFirestoreModel(alert alerts.PriceAlert) AlertFirestoreModel {
 	return AlertFirestoreModel{
 		UserID:      alert.UserID,
@@ -162,10 +162,13 @@ func (r *AlertsFirestoreRepository) DeleteAlert(ctx context.Context, alert alert
 
 // MarkDeliveryFailed persists the alert's delivery-failure timestamp on the
 // stored document so the next scheduled check can pick it up for redelivery
-// (and, later, dead-letter it once it has failed long enough).
+// (and, later, dead-letter it once it has failed long enough). It updates
+// only the delivery_failed_at field and returns NotFound when the document
+// no longer exists (e.g. deleted concurrently): a deleted alert is never
+// resurrected.
 func (r *AlertsFirestoreRepository) MarkDeliveryFailed(ctx context.Context, alert alerts.PriceAlert, failedAt time.Time) error {
-	_, err := r.alertCollection().Doc(alert.Id).Set(ctx, map[string]any{
-		"delivery_failed_at": timeToMs(failedAt),
-	}, firestore.MergeAll)
+	_, err := r.alertCollection().Doc(alert.Id).Update(ctx, []firestore.Update{
+		{Path: "delivery_failed_at", Value: timeToMs(failedAt)},
+	})
 	return err
 }
