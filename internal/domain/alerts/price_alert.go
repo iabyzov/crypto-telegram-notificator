@@ -1,11 +1,17 @@
 package alerts
 
+import "time"
+
 type PriceAlert struct {
 	Id          string
 	Symbol      string
 	TargetPrice float64
 	UserID      int64
 	Type        AlertType
+	// DeliveryFailedAt records when notification delivery last failed. Zero
+	// means the alert has not failed delivery (yet); a non-zero value marks
+	// an alert awaiting redelivery on the next scheduled check.
+	DeliveryFailedAt time.Time
 }
 
 // IsTriggeredBy reports whether the current price satisfies the alert's

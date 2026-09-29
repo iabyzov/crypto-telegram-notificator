@@ -16,9 +16,16 @@ type AlertFirestoreModel struct {
 	TargetPrice float64 `firestore:"target_price"`
 	CreatedAt   int64   `firestore:"created_at"`
 	Type        string  `firestore:"type"`
+	// DeliveryFailedAt is a Unix timestamp in milliseconds; zero means the
+	// alert has never failed delivery. omitempty keeps documents written by
+	// older code (and fresh alerts) free of the field.
+	DeliveryFailedAt int64 `firestore:"delivery_failed_at,omitempty"`
 }
 
-// mapToFirestoreModel converts a domain PriceAlert to a Firestore model
+// mapToFirestoreModel converts a domain PriceAlert to a Firestore model.
+// DeliveryFailedAt is intentionally not mapped: this mapper only creates
+// fresh alerts via AddAlert; failure stamps are written in place by
+// MarkDeliveryFailed (MergeAll), never by a full-document rewrite.
 func mapToFirestoreModel(alert alerts.PriceAlert) AlertFirestoreModel {
 	return AlertFirestoreModel{
 		UserID:      alert.UserID,
@@ -44,7 +51,28 @@ func mapToDomainModel(model AlertFirestoreModel, docID string) (alerts.PriceAler
 		Symbol:      model.CoinID,
 		TargetPrice: model.TargetPrice,
 		Type:        alertType,
+		// Zero stays zero: an alert that never failed delivery keeps a zero
+		// DeliveryFailedAt after the round trip.
+		DeliveryFailedAt: msToTime(model.DeliveryFailedAt),
 	}, nil
+}
+
+// msToTime converts a Unix-milliseconds timestamp to time.Time. Zero or
+// negative (unset) values map to the zero time.
+func msToTime(ms int64) time.Time {
+	if ms <= 0 {
+		return time.Time{}
+	}
+	return time.UnixMilli(ms).UTC()
+}
+
+// timeToMs converts a time.Time to a Unix-milliseconds timestamp; the zero
+// time maps to zero so it round-trips through msToTime unchanged.
+func timeToMs(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+	return t.UnixMilli()
 }
 
 type AlertsFirestoreRepository struct {
@@ -129,5 +157,15 @@ func (r *AlertsFirestoreRepository) DeleteAlert(ctx context.Context, alert alert
 	collection := r.alertCollection()
 
 	_, err := collection.Doc(alert.Id).Delete(ctx)
+	return err
+}
+
+// MarkDeliveryFailed persists the alert's delivery-failure timestamp on the
+// stored document so the next scheduled check can pick it up for redelivery
+// (and, later, dead-letter it once it has failed long enough).
+func (r *AlertsFirestoreRepository) MarkDeliveryFailed(ctx context.Context, alert alerts.PriceAlert, failedAt time.Time) error {
+	_, err := r.alertCollection().Doc(alert.Id).Set(ctx, map[string]any{
+		"delivery_failed_at": timeToMs(failedAt),
+	}, firestore.MergeAll)
 	return err
 }

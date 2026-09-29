@@ -35,6 +35,7 @@ type fakeAlertsRepository struct {
 	nextID     int
 	stored     []alerts.PriceAlert
 	deleteLog  []alerts.PriceAlert
+	failureLog []deliveryFailure
 	addFailure int
 }
 
@@ -93,6 +94,31 @@ func (f *fakeAlertsRepository) DeleteAlert(_ context.Context, alert alerts.Price
 	return fmt.Errorf("alert %q not found", alert.Id)
 }
 
+// deliveryFailure is one MarkDeliveryFailed call: which alert failed and at
+// what timestamp the checker reported.
+type deliveryFailure struct {
+	alert    alerts.PriceAlert
+	failedAt time.Time
+}
+
+// MarkDeliveryFailed records the failure and stamps the stored alert, like
+// the Firestore repository writes delivery_failed_at in place.
+func (f *fakeAlertsRepository) MarkDeliveryFailed(_ context.Context, alert alerts.PriceAlert, failedAt time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fatalErr != nil {
+		return f.fatalErr
+	}
+	for i, existing := range f.stored {
+		if existing.Id == alert.Id {
+			f.stored[i].DeliveryFailedAt = failedAt
+			f.failureLog = append(f.failureLog, deliveryFailure{alert: alert, failedAt: failedAt})
+			return nil
+		}
+	}
+	return fmt.Errorf("alert %q not found", alert.Id)
+}
+
 // added returns the alerts successfully stored, in insertion order, with the
 // ids assigned by AddAlert.
 func (f *fakeAlertsRepository) added() []alerts.PriceAlert {
@@ -106,6 +132,13 @@ func (f *fakeAlertsRepository) deleted() []alerts.PriceAlert {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]alerts.PriceAlert(nil), f.deleteLog...)
+}
+
+// deliveryFailures returns the MarkDeliveryFailed calls, in call order.
+func (f *fakeAlertsRepository) deliveryFailures() []deliveryFailure {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]deliveryFailure(nil), f.failureLog...)
 }
 
 // addFailures returns how many AddAlert calls were rejected due to fatalErr.
@@ -123,6 +156,15 @@ type stubTelegramTransport struct {
 	// each attempt is still counted by sendAttempts. Tests set it directly
 	// before triggering a send.
 	failNextSends int
+
+	// failEverySends makes every sendMessage request fail, forever; used to
+	// observe the checker's give-up path.
+	failEverySends bool
+
+	// onSend, when set, is invoked at the moment a sendMessage request
+	// arrives, before it is answered. Tests use it to observe state at send
+	// time (e.g. that the alert is still stored).
+	onSend func()
 
 	mu       sync.Mutex
 	messages []stubSentMessage
@@ -143,11 +185,15 @@ func (s *stubTelegramTransport) Do(req *http.Request) (*http.Response, error) {
 
 	s.mu.Lock()
 	s.attempts++
-	failing := s.failNextSends > 0
-	if failing {
+	failing := s.failNextSends > 0 || s.failEverySends
+	if s.failNextSends > 0 {
 		s.failNextSends--
 	}
+	hook := s.onSend
 	s.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
 	if failing {
 		return nil, errors.New("stub: telegram send failed")
 	}
