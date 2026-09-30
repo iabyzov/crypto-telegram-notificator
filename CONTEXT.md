@@ -17,5 +17,9 @@ An alert whose condition is satisfied by the current price, inclusive at the tar
 _Avoid_: fired, hit, matched
 
 **Delivery**:
-Getting a Triggered alert's notification to its user via Telegram. At-least-once: sent before the alert is deleted, retried with 2s/4s/8s backoff; total failure stamps `delivery_failed_at` and keeps the alert for the next scheduled run.
+Getting a Triggered alert's notification to its user via Telegram. At-least-once: sent before the alert is deleted, retried with 2s/4s/8s backoff; total failure stamps `delivery_failed_at` (the first failure - kept, not overwritten) and keeps the alert for the next scheduled run.
 _Avoid_: notification, message, fire-and-forget
+
+**DeadLetter**:
+Terminal removal of a Delivery-failed alert after 1 hour of failure (from the first failure): delete from storage + `telegram_notification_errors_total` + error log. The alert's notification is never delivered; the loss is observable to operators only.
+_Avoid_: purge, drop, expire
