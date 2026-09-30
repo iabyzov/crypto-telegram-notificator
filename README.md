@@ -216,8 +216,9 @@ Users can interact with the bot using these commands:
    - For each unique cryptocurrency symbol:
      - Fetches current price from CoinMarketCap
      - Checks if any alert conditions are met
-     - Sends Telegram notification to users with triggered alerts
-     - Automatically deletes triggered alerts
+     - Sends the Telegram notification first, retrying with 2s/4s/8s backoff
+     - Deletes the alert only after the notification is delivered
+     - If delivery keeps failing, the alert stays in Firestore (stamped with `delivery_failed_at`) and is retried on the next scheduled run
 
 4. **Notifications**:
    - Users receive a message when their alert is triggered

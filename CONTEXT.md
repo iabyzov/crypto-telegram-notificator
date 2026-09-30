@@ -5,7 +5,7 @@ A Telegram bot that monitors cryptocurrency prices (CoinMarketCap) and notifies 
 ## Language
 
 **PriceAlert**:
-A user's registered condition: a symbol, a target price, and an AlertType. Fires once, then is deleted.
+A user's registered condition: a symbol, a target price, and an AlertType. One-shot: fires when triggered, then is deleted once Delivery succeeds.
 _Avoid_: watch, rule, alert rule
 
 **AlertType**:
@@ -15,3 +15,7 @@ _Avoid_: direction, above, below
 **Triggered**:
 An alert whose condition is satisfied by the current price, inclusive at the target (More: `>=`, Less: `<=`).
 _Avoid_: fired, hit, matched
+
+**Delivery**:
+Getting a Triggered alert's notification to its user via Telegram. At-least-once: sent before the alert is deleted, retried with 2s/4s/8s backoff; total failure stamps `delivery_failed_at` and keeps the alert for the next scheduled run.
+_Avoid_: notification, message, fire-and-forget

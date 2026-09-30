@@ -14,15 +14,27 @@ import (
 
 type PriceService struct {
 	cmcAPIKey string
-	cache     *redis.Client
-	cacheTTL  time.Duration
+	// cmcEndpoint is the CoinMarketCap quotes/latest URL. Injectable so tests
+	// can point the service at a fake server.
+	cmcEndpoint string
+	cache       *redis.Client
+	cacheTTL    time.Duration
 }
 
+// NewPriceService creates a PriceService against the production CoinMarketCap
+// endpoint.
 func NewPriceService(cmcAPIKey string, cache *redis.Client, cacheTTL time.Duration) *PriceService {
+	return NewPriceServiceWithEndpoint(cmcAPIKey, cache, cacheTTL, "https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest")
+}
+
+// NewPriceServiceWithEndpoint is NewPriceService with an explicit API endpoint,
+// the seam tests use to point the service at a fake CoinMarketCap server.
+func NewPriceServiceWithEndpoint(cmcAPIKey string, cache *redis.Client, cacheTTL time.Duration, cmcEndpoint string) *PriceService {
 	return &PriceService{
-		cmcAPIKey: cmcAPIKey,
-		cache:     cache,
-		cacheTTL:  cacheTTL,
+		cmcAPIKey:   cmcAPIKey,
+		cmcEndpoint: cmcEndpoint,
+		cache:       cache,
+		cacheTTL:    cacheTTL,
 	}
 }
 
@@ -38,11 +50,10 @@ type price struct {
 }
 
 func (s *PriceService) GetPrices(symbols []string) (map[string]float64, error) {
-	// TODO: implement cache-aside here — check s.cache for each symbol before hitting the API
 	ctx := context.Background()
 
 	client := &http.Client{}
-	req, err := http.NewRequest("GET", "https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest", nil)
+	req, err := http.NewRequest("GET", s.cmcEndpoint, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -52,11 +63,15 @@ func (s *PriceService) GetPrices(symbols []string) (map[string]float64, error) {
 	// Join symbols into a comma-separated string
 	symbolParams := make([]string, 0, len(symbols))
 	for _, sym := range symbols {
-		val, err := s.cache.Get(ctx, sym).Result()
-		if err == nil {
-			intVal, _ := strconv.ParseFloat(val, 64)
-			prices[sym] = intVal
-			continue
+		// A nil cache means caching is disabled (as in tests); every symbol
+		// goes straight to the API.
+		if s.cache != nil {
+			val, err := s.cache.Get(ctx, sym).Result()
+			if err == nil {
+				intVal, _ := strconv.ParseFloat(val, 64)
+				prices[sym] = intVal
+				continue
+			}
 		}
 
 		symbolParams = append(symbolParams, sym)
@@ -89,13 +104,13 @@ func (s *PriceService) GetPrices(symbols []string) (map[string]float64, error) {
 		return nil, err
 	}
 
-	// create a slice to hold prices
-
 	for _, symbol := range symbols {
 		if data, ok := result.Data[symbol]; ok {
 			if quote, ok := data.Quote["USD"]; ok {
 				prices[symbol] = quote.Price
-				s.cache.Set(ctx, symbol, strconv.FormatFloat(quote.Price, 'f', -1, 64), s.cacheTTL).Result()
+				if s.cache != nil {
+					s.cache.Set(ctx, symbol, strconv.FormatFloat(quote.Price, 'f', -1, 64), s.cacheTTL).Result()
+				}
 			}
 		}
 	}

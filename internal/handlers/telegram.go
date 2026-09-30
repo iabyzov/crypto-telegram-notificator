@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/iabyzov/coinmarketcap-telegram-bot/internal/domain/alerts"
@@ -21,6 +22,9 @@ type AlertsRepository interface {
 	GetAllAlerts(ctx context.Context) ([]alerts.PriceAlert, error)
 	GetAlertsByUserID(ctx context.Context, userID int64) ([]alerts.PriceAlert, error)
 	DeleteAlert(ctx context.Context, alert alerts.PriceAlert) error
+	// MarkDeliveryFailed records that the alert's notification could not be
+	// delivered at failedAt, so the next scheduled check retries it.
+	MarkDeliveryFailed(ctx context.Context, alert alerts.PriceAlert, failedAt time.Time) error
 }
 
 type AlertIntentParser interface {
