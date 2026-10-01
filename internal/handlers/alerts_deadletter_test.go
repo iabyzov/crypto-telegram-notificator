@@ -2,12 +2,19 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/iabyzov/coinmarketcap-telegram-bot/internal/domain/alerts"
+	"github.com/iabyzov/coinmarketcap-telegram-bot/internal/services"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
@@ -54,15 +61,22 @@ func captureLogs(t *testing.T) *capturingLogHandler {
 	return handler
 }
 
-// recordAttr returns the string value of the named attribute on a record, or
-// "" when absent.
+// recordAttr returns the value of the named attribute on a record formatted
+// as a string, or "" when absent. Handles the attribute kinds the dead-letter
+// record carries: string, int64 (user_id), and float64 (target_price).
 func recordAttr(r slog.Record, key string) string {
 	var value string
 	r.Attrs(func(a slog.Attr) bool {
-		if a.Key == key {
-			if s, ok := a.Value.Any().(string); ok {
-				value = s
-			}
+		if a.Key != key {
+			return true
+		}
+		switch v := a.Value.Any().(type) {
+		case string:
+			value = v
+		case int64:
+			value = strconv.FormatInt(v, 10)
+		case float64:
+			value = strconv.FormatFloat(v, 'f', -1, 64)
 		}
 		return true
 	})
@@ -129,8 +143,20 @@ func TestCheckAlertsDeadLettersAlertFailingOverAnHour(t *testing.T) {
 	if len(deleted) != 1 {
 		t.Fatalf("expected exactly one deleted alert, got %d", len(deleted))
 	}
-	if got, want := recordAttr(errs[0], "alert_id"), deleted[0].Id; got != want {
-		t.Errorf("ERROR record alert_id = %q, want %q", got, want)
+	// The record carries every detail the ADR promises the operator: id,
+	// user, symbol, target price, type, and the first-failure time.
+	want := map[string]string{
+		"alert_id":        deleted[0].Id,
+		"user_id":         "42",
+		"symbol":          "BTC",
+		"target_price":    "50000",
+		"alert_type":      "More",
+		"first_failed_at": h.clock.now.Add(-2 * time.Hour).Format(time.RFC3339),
+	}
+	for key, wantValue := range want {
+		if got := recordAttr(errs[0], key); got != wantValue {
+			t.Errorf("ERROR record %s = %q, want %q", key, got, wantValue)
+		}
 	}
 }
 
@@ -244,5 +270,177 @@ func TestCheckAlertsDoesNotDeadLetterUnstampedAlerts(t *testing.T) {
 
 	if got := len(h.repo.added()); got != 1 {
 		t.Errorf("unstamped alert must be kept through the normal flow, %d remain", got)
+	}
+}
+
+// flakyDeleteRepository wraps the fake repository and fails the first N
+// DeleteAlert calls, driving the checker's terminal-delete failure path
+// deterministically - the storage equivalent of a Firestore outage at the
+// exact moment a dead alert is being swept.
+type flakyDeleteRepository struct {
+	*fakeAlertsRepository
+	failures int
+}
+
+func (f *flakyDeleteRepository) DeleteAlert(ctx context.Context, alert alerts.PriceAlert) error {
+	if f.failures > 0 {
+		f.failures--
+		return errors.New("injected: delete unavailable")
+	}
+	return f.fakeAlertsRepository.DeleteAlert(ctx, alert)
+}
+
+// newCheckerOverRepo wires an AlertChecker over an arbitrary repository
+// (sharing the harness's fake CoinMarketCap server, telegram transport, and
+// clock), so a run can be driven through a repository with injected faults.
+func (h *checkerHarness) newCheckerOverRepo(t *testing.T, repo AlertsRepository) *AlertChecker {
+	t.Helper()
+	bot, err := tgbotapi.NewBotAPIWithClient("test-token", tgbotapi.APIEndpoint, h.transport)
+	if err != nil {
+		t.Fatalf("creating bot with stub transport: %v", err)
+	}
+	return NewAlertCheckerWithClock(
+		repo,
+		services.NewPriceServiceWithEndpoint("test-cmc-key", nil, time.Minute, h.cmc.URL),
+		bot,
+		h.clock,
+	)
+}
+
+// TestCheckAlertsKeepsAlertExactlyOneHourOld pins the exclusive side of the
+// deadline: an alert that failed exactly one hour ago is NOT yet
+// dead-lettered (> 1 hour is terminal), and continues through the normal
+// at-least-once flow instead.
+func TestCheckAlertsKeepsAlertExactlyOneHourOld(t *testing.T) {
+	h := newCheckerHarness(t, 51000.0)
+	logs := captureLogs(t)
+
+	h.storeStampedAlert(t, alerts.PriceAlert{
+		Symbol: "BTC", TargetPrice: 50000, UserID: 42, Type: alerts.More,
+	}, h.clock.now.Add(-deliveryFailureDeadline)) // exactly one hour
+
+	counterBefore := testutil.ToFloat64(telegramNotificationErrors)
+	if err := h.checker.CheckAlerts(context.Background()); err != nil {
+		t.Fatalf("CheckAlerts: %v", err)
+	}
+
+	// Not dead-lettered: the normal flow delivered it.
+	if got := h.transport.sendAttempts(); got != 1 {
+		t.Errorf("alert exactly one hour old must be redelivered (1 attempt), got %d", got)
+	}
+	if got := len(h.transport.sentMessages()); got != 1 {
+		t.Errorf("notification must reach the user, got %d messages", got)
+	}
+	if got := len(h.repo.added()); got != 0 {
+		t.Errorf("delivered alert must be deleted, %d remain", got)
+	}
+	if got := testutil.ToFloat64(telegramNotificationErrors) - counterBefore; got != 0 {
+		t.Errorf("no dead-letter accounting for an exactly-one-hour-old alert, counter moved by %v", got)
+	}
+	if got := len(logs.errorRecords()); got != 0 {
+		t.Errorf("no dead-letter ERROR record for an exactly-one-hour-old alert, got %d", got)
+	}
+}
+
+// TestCheckAlertsFailedTerminalDeleteKeepsAlertForNextSweep pins the
+// retry-on-delete-failure contract from ADR-0001: when the terminal delete
+// itself fails, the alert is kept with NO dead-letter accounting (no ERROR
+// record, no counter increment), and the next scheduled run's sweep retries
+// the dead-letter to completion.
+func TestCheckAlertsFailedTerminalDeleteKeepsAlertForNextSweep(t *testing.T) {
+	h := newCheckerHarness(t, 1000.0) // price retraced: the aged alert does not trigger
+	logs := captureLogs(t)
+
+	h.storeStampedAlert(t, alerts.PriceAlert{
+		Symbol: "BTC", TargetPrice: 50000, UserID: 42, Type: alerts.More,
+	}, h.clock.now.Add(-2*time.Hour))
+
+	flaky := &flakyDeleteRepository{fakeAlertsRepository: h.repo, failures: 1}
+	failingRun := h.newCheckerOverRepo(t, flaky)
+
+	counterBefore := testutil.ToFloat64(telegramNotificationErrors)
+	if err := failingRun.CheckAlerts(context.Background()); err != nil {
+		t.Fatalf("CheckAlerts (failed delete run): %v", err)
+	}
+
+	// The alert survived the failed terminal delete, uncounted and unlogged.
+	if got := len(h.repo.added()); got != 1 {
+		t.Fatalf("alert must be kept when the terminal delete fails, %d remain", got)
+	}
+	if got := len(logs.errorRecords()); got != 0 {
+		t.Errorf("failed delete must not emit a dead-letter ERROR record, got %d", got)
+	}
+	if got := testutil.ToFloat64(telegramNotificationErrors) - counterBefore; got != 0 {
+		t.Errorf("failed delete must not touch the counter, moved by %v", got)
+	}
+	if got := h.transport.sendAttempts(); got != 0 {
+		t.Errorf("untriggered kept alert must not be notified, got %d attempts", got)
+	}
+
+	// The next run's sweep retries the dead-letter and completes it.
+	if err := h.checker.CheckAlerts(context.Background()); err != nil {
+		t.Fatalf("CheckAlerts (retry run): %v", err)
+	}
+	if got := len(h.repo.added()); got != 0 {
+		t.Errorf("retry run must dead-letter the alert, %d remain", got)
+	}
+	if got := testutil.ToFloat64(telegramNotificationErrors) - counterBefore; got != 1 {
+		t.Errorf("completed dead-letter must increment the counter by 1, got %v", got)
+	}
+	if got := len(logs.errorRecords()); got != 1 {
+		t.Errorf("completed dead-letter must emit one ERROR record, got %d", got)
+	}
+}
+
+// TestCheckAlertsSweepSpendsNoQuotaOnDeadAlerts pins the ADR's quota choice:
+// the dead-letter sweep runs before price fetching, so a run whose only alert
+// is dead-lettered never reaches the pricing API at all.
+func TestCheckAlertsSweepSpendsNoQuotaOnDeadAlerts(t *testing.T) {
+	var cmcRequests atomic.Int32
+	cmc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cmcRequests.Add(1)
+		_ = r // the response shape is irrelevant: the request must not happen
+		w.Write([]byte(`{"data":{"BTC":{"quote":{"USD":{"price":51000.0}}}}}`))
+	}))
+	t.Cleanup(cmc.Close)
+
+	transport := &stubTelegramTransport{}
+	bot, err := tgbotapi.NewBotAPIWithClient("test-token", tgbotapi.APIEndpoint, transport)
+	if err != nil {
+		t.Fatalf("creating bot with stub transport: %v", err)
+	}
+
+	repo := &fakeAlertsRepository{}
+	clock := &fakeClock{now: time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)}
+	checker := NewAlertCheckerWithClock(
+		repo,
+		services.NewPriceServiceWithEndpoint("test-cmc-key", nil, time.Minute, cmc.URL),
+		bot,
+		clock,
+	)
+
+	// The only stored alert is 2 hours past its first failure and would
+	// trigger at the quoted price - it must be swept out before pricing.
+	repo.AddAlert(context.Background(), alerts.PriceAlert{
+		Symbol: "BTC", TargetPrice: 50000, UserID: 42, Type: alerts.More,
+		DeliveryFailedAt: clock.now.Add(-2 * time.Hour),
+	})
+
+	counterBefore := testutil.ToFloat64(telegramNotificationErrors)
+	if err := checker.CheckAlerts(context.Background()); err != nil {
+		t.Fatalf("CheckAlerts: %v", err)
+	}
+
+	if got := cmcRequests.Load(); got != 0 {
+		t.Errorf("dead-lettered alerts must spend no pricing quota, got %d CoinMarketCap requests", got)
+	}
+	if got := len(repo.added()); got != 0 {
+		t.Errorf("aged alert must be dead-lettered, %d remain", got)
+	}
+	if got := transport.sendAttempts(); got != 0 {
+		t.Errorf("dead-lettered alert must not be notified, got %d attempts", got)
+	}
+	if got := testutil.ToFloat64(telegramNotificationErrors) - counterBefore; got != 1 {
+		t.Errorf("dead-lettering must increment the counter by 1, got %v", got)
 	}
 }

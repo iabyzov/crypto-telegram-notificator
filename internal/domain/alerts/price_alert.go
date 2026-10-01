@@ -8,9 +8,11 @@ type PriceAlert struct {
 	TargetPrice float64
 	UserID      int64
 	Type        AlertType
-	// DeliveryFailedAt records when notification delivery last failed. Zero
-	// means the alert has not failed delivery (yet); a non-zero value marks
-	// an alert awaiting redelivery on the next scheduled check.
+	// DeliveryFailedAt records when notification delivery FIRST failed: the
+	// earliest stamp is kept, and later failing runs never overwrite it, so
+	// the one-hour dead-letter deadline measures from the first failure.
+	// Zero means the alert has not failed delivery (yet); a non-zero value
+	// marks an alert awaiting redelivery on the next scheduled check.
 	DeliveryFailedAt time.Time
 }
 
