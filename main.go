@@ -4,8 +4,8 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"net/http/pprof"
 	"os"
-
 	"time"
 
 	"cloud.google.com/go/firestore"
@@ -17,8 +17,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
-
-	"net/http/pprof"
 )
 
 var (
@@ -40,6 +38,51 @@ func mustEnv(key string) string {
 		log.Fatalf("%s environment variable is not set", key)
 	}
 	return value
+}
+
+// newMainMux builds the service's HTTP surface from its two wired handlers:
+// the Telegram webhook, the Cloud Scheduler-triggered alert check, the pprof
+// debugging routes, and the health check. Each request to /webhook and
+// /check-alerts is counted on the corresponding endpoint counter, whatever
+// the outcome. The Prometheus /metrics endpoint is deliberately not part of
+// this surface: it is served on its own port.
+func newMainMux(alertChecker *handlers.AlertChecker, telegramHandler *handlers.TelegramWebhookHandler) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/debug/pprof/", pprof.Index)
+	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+
+	// Webhook endpoint for Telegram
+	mux.HandleFunc("/webhook", func(w http.ResponseWriter, r *http.Request) {
+		webhookMetric.Inc()
+		telegramHandler.HandleWebhook(w, r)
+	})
+
+	// Alert checker endpoint (can be triggered by Cloud Scheduler via HTTP)
+	mux.HandleFunc("/check-alerts", func(w http.ResponseWriter, r *http.Request) {
+		checkAlertMetric.Inc()
+		log.Println("Starting price alert check...")
+
+		if err := alertChecker.CheckAlerts(r.Context()); err != nil {
+			log.Printf("Error checking alerts: %v", err)
+			http.Error(w, "Error checking alerts", http.StatusInternalServerError)
+			return
+		}
+
+		log.Println("Price alert check completed successfully")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("Alert check completed"))
+	})
+
+	// Health check endpoint
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("OK"))
+	})
+
+	return mux
 }
 
 func main() {
@@ -97,41 +140,7 @@ func main() {
 	alertChecker := handlers.NewAlertChecker(alertsRepository, priceService, bot)
 	telegramHandler := handlers.NewTelegramWebhookHandler(bot, alertsRepository, alertLlmParser, webhookSecret)
 
-	// Create HTTP server with handlers
-	mux := http.NewServeMux()
-	mux.HandleFunc("/debug/pprof/", pprof.Index)
-	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
-	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
-
-	// Webhook endpoint for Telegram
-	mux.HandleFunc("/webhook", func(w http.ResponseWriter, r *http.Request) {
-		webhookMetric.Inc()
-		telegramHandler.HandleWebhook(w, r)
-	})
-
-	// Alert checker endpoint (can be triggered by Cloud Scheduler via HTTP)
-	mux.HandleFunc("/check-alerts", func(w http.ResponseWriter, r *http.Request) {
-		checkAlertMetric.Inc()
-		log.Println("Starting price alert check...")
-
-		if err := alertChecker.CheckAlerts(r.Context()); err != nil {
-			log.Printf("Error checking alerts: %v", err)
-			http.Error(w, "Error checking alerts", http.StatusInternalServerError)
-			return
-		}
-
-		log.Println("Price alert check completed successfully")
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("Alert check completed"))
-	})
-
-	// Health check endpoint
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
-	})
+	mux := newMainMux(alertChecker, telegramHandler)
 
 	promMux := http.NewServeMux()
 	promMux.Handle("/metrics", promhttp.Handler())
