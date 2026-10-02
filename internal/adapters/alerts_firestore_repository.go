@@ -6,6 +6,8 @@ import (
 
 	"cloud.google.com/go/firestore"
 	"github.com/iabyzov/coinmarketcap-telegram-bot/internal/domain/alerts"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // AlertFirestoreModel represents the data structure for storing alerts in Firestore
@@ -35,10 +37,10 @@ func mapToFirestoreModel(alert alerts.PriceAlert) AlertFirestoreModel {
 	}
 }
 
-// mapToDomainModel converts a Firestore model to a domain PriceAlert
-func mapToDomainModel(model AlertFirestoreModel, docID string) (alerts.PriceAlert, error) {
-	// Unknown type strings default to More so existing documents keep
-	// loading; the error return stays dormant, matching today's behavior.
+// mapToDomainModel converts a Firestore model to a domain PriceAlert.
+// An unparseable type string defaults to More so documents written by
+// older code keep loading.
+func mapToDomainModel(model AlertFirestoreModel, docID string) alerts.PriceAlert {
 	alertType, err := alerts.ParseAlertType(model.Type)
 	if err != nil {
 		alertType = alerts.More
@@ -53,7 +55,7 @@ func mapToDomainModel(model AlertFirestoreModel, docID string) (alerts.PriceAler
 		// Zero stays zero: an alert that never failed delivery keeps a zero
 		// DeliveryFailedAt after the round trip.
 		DeliveryFailedAt: msToTime(model.DeliveryFailedAt),
-	}, nil
+	}
 }
 
 // msToTime converts a Unix-milliseconds timestamp to time.Time. Zero or
@@ -114,6 +116,36 @@ func (r *AlertsFirestoreRepository) GetAlertsByUserID(ctx context.Context, userI
 	return alertsFrom(ctx, r.alertCollection().Where("user_id", "==", userID).Documents(ctx))
 }
 
+// GetAlertByID loads the one alert document addressed by alertID with a
+// single direct read and returns it only when it belongs to userID. It
+// answers nil (not an error) whenever the id cannot name the user's stored
+// alert: no such document, a document name Firestore rejects, a document
+// that fails to decode, or one owned by a different user — the same "not
+// found" a scan of the user's alerts would report for that id.
+func (r *AlertsFirestoreRepository) GetAlertByID(ctx context.Context, userID int64, alertID string) (*alerts.PriceAlert, error) {
+	snapshot, err := r.alertCollection().Doc(alertID).Get(ctx)
+	if err != nil {
+		// A document name Firestore refuses (containing "/", being "." or
+		// "..", …) can never name a stored alert, so both "no such
+		// document" and "malformed document name" are simply not found.
+		if status.Code(err) == codes.NotFound || status.Code(err) == codes.InvalidArgument {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	var model AlertFirestoreModel
+	if err := snapshot.DataTo(&model); err != nil {
+		return nil, nil
+	}
+	if model.UserID != userID {
+		return nil, nil
+	}
+
+	alert := mapToDomainModel(model, snapshot.Ref.ID)
+	return &alert, nil
+}
+
 // alertsFrom drains a Firestore query into domain alerts. Documents that
 // fail to decode (or whose type string is unparseable) are skipped, not
 // failed: one bad document must not block the rest of the load.
@@ -129,11 +161,7 @@ func alertsFrom(ctx context.Context, iter *firestore.DocumentIterator) ([]alerts
 		if err := doc.DataTo(&model); err != nil {
 			continue
 		}
-		domainAlert, err := mapToDomainModel(model, doc.Ref.ID)
-		if err != nil {
-			continue
-		}
-		result = append(result, domainAlert)
+		result = append(result, mapToDomainModel(model, doc.Ref.ID))
 	}
 
 	return result, nil

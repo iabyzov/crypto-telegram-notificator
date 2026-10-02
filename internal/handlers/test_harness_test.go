@@ -31,6 +31,12 @@ type fakeAlertsRepository struct {
 	// AddAlert a no-op.
 	fatalErr error
 
+	// deleteErr, when non-nil, makes DeleteAlert fail with that error and
+	// keep the alert stored. It is the per-case injection for pinning the
+	// handler's "Failed to delete alert" branch, which fatalErr cannot
+	// reach (it fails the retrieval first).
+	deleteErr error
+
 	mu         sync.Mutex
 	nextID     int
 	stored     []alerts.PriceAlert
@@ -78,11 +84,31 @@ func (f *fakeAlertsRepository) GetAlertsByUserID(ctx context.Context, userID int
 	return userAlerts, nil
 }
 
+// GetAlertByID returns the alert stored under alertID when it belongs to
+// userID, and nil (not an error) when no such alert exists — including when
+// the id names another user's alert.
+func (f *fakeAlertsRepository) GetAlertByID(ctx context.Context, userID int64, alertID string) (*alerts.PriceAlert, error) {
+	all, err := f.getAlerts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, alert := range all {
+		if alert.Id == alertID && alert.UserID == userID {
+			found := alert
+			return &found, nil
+		}
+	}
+	return nil, nil
+}
+
 func (f *fakeAlertsRepository) DeleteAlert(_ context.Context, alert alerts.PriceAlert) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.fatalErr != nil {
 		return f.fatalErr
+	}
+	if f.deleteErr != nil {
+		return f.deleteErr
 	}
 	for i, existing := range f.stored {
 		if existing.Id == alert.Id {
@@ -338,6 +364,9 @@ func TestFakeAlertsRepositoryInjectsError(t *testing.T) {
 		if _, err := repo.GetAllAlerts(context.Background()); err != injected {
 			t.Errorf("GetAllAlerts error = %v, want %v", err, injected)
 		}
+		if _, err := repo.GetAlertByID(context.Background(), 1, "x"); err != injected {
+			t.Errorf("GetAlertByID error = %v, want %v", err, injected)
+		}
 		if err := repo.DeleteAlert(context.Background(), alerts.PriceAlert{Id: "x"}); err != injected {
 			t.Errorf("DeleteAlert error = %v, want %v", err, injected)
 		}
@@ -359,6 +388,44 @@ func TestFakeAlertsRepositoryInjectsError(t *testing.T) {
 			t.Errorf("addFailures = %d, want 0", got)
 		}
 	})
+}
+
+// TestFakeAlertsRepositoryGetAlertIDOwnsIDAndUser pins the by-id lookup
+// semantics: the owner's id resolves to exactly that alert, another user's
+// id or an unknown id answers nil without an error, and a storage failure
+// surfaces as an error.
+func TestFakeAlertsRepositoryGetAlertByIDOwnsIDAndUser(t *testing.T) {
+	repo := &fakeAlertsRepository{}
+	repo.AddAlert(context.Background(), alerts.PriceAlert{Symbol: "BTC", UserID: 7})
+	repo.AddAlert(context.Background(), alerts.PriceAlert{Symbol: "ETH", UserID: 8})
+	stored := repo.added()
+
+	found, err := repo.GetAlertByID(context.Background(), 7, stored[0].Id)
+	if err != nil {
+		t.Fatalf("GetAlertByID for the owner: %v", err)
+	}
+	if found == nil || found.Id != stored[0].Id || found.Symbol != "BTC" || found.UserID != 7 {
+		t.Errorf("owner's id must resolve to their alert, got %+v", found)
+	}
+
+	foreign, err := repo.GetAlertByID(context.Background(), 8, stored[0].Id)
+	if err != nil {
+		t.Fatalf("GetAlertByID for a foreign user: %v", err)
+	}
+	if foreign != nil {
+		t.Errorf("another user's alert must be invisible, got %+v", foreign)
+	}
+
+	missing, err := repo.GetAlertByID(context.Background(), 7, "no-such-id")
+	if err != nil || missing != nil {
+		t.Errorf("unknown id must answer nil without error, got (%+v, %v)", missing, err)
+	}
+
+	injected := errors.New("firestore unavailable")
+	repo.fatalErr = injected
+	if got, err := repo.GetAlertByID(context.Background(), 7, stored[0].Id); got != nil || err != injected {
+		t.Errorf("storage failure must surface its error, got (%+v, %v)", got, err)
+	}
 }
 
 func TestFakeAlertsRepositoryAddAssignsUniqueIds(t *testing.T) {
@@ -409,6 +476,27 @@ func TestFakeAlertsRepositoryDeleteRemovesMatchingAlert(t *testing.T) {
 	deleted := repo.deleted()
 	if len(deleted) != 1 || deleted[0].Id != added[0].Id {
 		t.Errorf("want deleted() to record the deleted alert, got %+v", deleted)
+	}
+}
+
+// TestFakeAlertsRepositoryDeleteErrKeepsAlertStored pins the deleteErr
+// injection: a failing DeleteAlert rejects the removal and changes nothing,
+// so tests can observe the handler's "keep stored" contract on a failed
+// delete.
+func TestFakeAlertsRepositoryDeleteErrKeepsAlertStored(t *testing.T) {
+	repo := &fakeAlertsRepository{}
+	repo.AddAlert(context.Background(), alerts.PriceAlert{Symbol: "BTC", UserID: 7})
+	added := repo.added()
+	repo.deleteErr = errors.New("delete rejected")
+
+	if err := repo.DeleteAlert(context.Background(), added[0]); err != repo.deleteErr {
+		t.Errorf("DeleteAlert error = %v, want %v", err, repo.deleteErr)
+	}
+	if remaining := repo.added(); len(remaining) != 1 || remaining[0].Id != added[0].Id {
+		t.Errorf("a failed delete must keep the alert stored, got %+v", remaining)
+	}
+	if got := len(repo.deleted()); got != 0 {
+		t.Errorf("a failed delete must not be recorded in deleted(), got %d", got)
 	}
 }
 
