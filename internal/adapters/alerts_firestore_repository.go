@@ -92,18 +92,12 @@ func (r *AlertsFirestoreRepository) alertCollection() *firestore.CollectionRef {
 	return r.firestoreClient.Collection("alerts")
 }
 
+// AddAlert stores the alert as a new document. The write's error is
+// deliberately swallowed: AlertsRepository gives AddAlert no error return,
+// so a failed write is silent — nothing is stored, and the bot still sends
+// the user its confirmation message.
 func (r *AlertsFirestoreRepository) AddAlert(ctx context.Context, alert alerts.PriceAlert) {
-	collection := r.alertCollection()
-
-	// Convert domain model to Firestore model
-	firestoreModel := mapToFirestoreModel(alert)
-
-	// Add the document to Firestore
-	_, _, err := collection.Add(ctx, firestoreModel)
-	if err != nil {
-		// Handle error appropriately
-		// Consider returning the error or logging it
-	}
+	_, _, _ = r.alertCollection().Add(ctx, mapToFirestoreModel(alert))
 }
 
 // GetAllAlerts retrieves all alerts from Firestore

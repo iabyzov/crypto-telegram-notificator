@@ -263,13 +263,25 @@ func (s *stubTelegramTransport) sendAttempts() int {
 }
 
 // newTestHarness wires a TelegramWebhookHandler against a fake repository and
-// a stub Telegram transport, with no webhook secret. The transport is
-// injected through the library's HTTPClient seam (NewBotAPIWithClient), so
-// sendMessage goes through the real BotAPI code path and its output is
-// observable.
+// a stub Telegram transport (see newStubBot for how the transport is
+// injected), with no webhook secret.
 func newTestHarness(t *testing.T) *testHarness {
 	t.Helper()
 	return newTestHarnessWithWebhookSecret(t, "")
+}
+
+// newStubBot wraps a stub Telegram transport in the real BotAPI client,
+// injecting it through the library's HTTPClient seam
+// (NewBotAPIWithClient), so sendMessage goes through the real library code
+// path and its output is observable. Every harness builds its bot through
+// this one helper: same token, same API endpoint, same failure message.
+func newStubBot(t *testing.T, transport *stubTelegramTransport) *tgbotapi.BotAPI {
+	t.Helper()
+	bot, err := tgbotapi.NewBotAPIWithClient("test-token", tgbotapi.APIEndpoint, transport)
+	if err != nil {
+		t.Fatalf("creating bot with stub transport: %v", err)
+	}
+	return bot
 }
 
 // newTestHarnessWithWebhookSecret is newTestHarness with a webhook secret.
@@ -277,10 +289,7 @@ func newTestHarnessWithWebhookSecret(t *testing.T, webhookSecret string) *testHa
 	t.Helper()
 
 	transport := &stubTelegramTransport{}
-	bot, err := tgbotapi.NewBotAPIWithClient("test-token", tgbotapi.APIEndpoint, transport)
-	if err != nil {
-		t.Fatalf("creating bot with stub transport: %v", err)
-	}
+	bot := newStubBot(t, transport)
 
 	repo := &fakeAlertsRepository{}
 	handler := NewTelegramWebhookHandler(bot, repo, nil, webhookSecret)

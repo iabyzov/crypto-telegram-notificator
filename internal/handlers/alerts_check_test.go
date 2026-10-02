@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/iabyzov/coinmarketcap-telegram-bot/internal/domain/alerts"
 	"github.com/iabyzov/coinmarketcap-telegram-bot/internal/services"
 )
@@ -88,10 +87,7 @@ func newCheckerHarness(t *testing.T, price float64) *checkerHarness {
 	t.Cleanup(cmc.Close)
 
 	transport := &stubTelegramTransport{}
-	bot, err := tgbotapi.NewBotAPIWithClient("test-token", tgbotapi.APIEndpoint, transport)
-	if err != nil {
-		t.Fatalf("creating bot with stub transport: %v", err)
-	}
+	bot := newStubBot(t, transport)
 
 	repo := &fakeAlertsRepository{}
 	priceService := services.NewPriceServiceWithEndpoint("test-cmc-key", nil, time.Minute, cmc.URL)
