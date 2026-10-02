@@ -122,15 +122,15 @@ func (ac *AlertChecker) CheckAlerts(ctx context.Context) error {
 		return nil
 	}
 
-	// Group alerts by symbol to minimize API calls
-	alertsBySymbol := make(map[string][]alerts.PriceAlert)
+	// Deduplicate the symbols so the whole run is priced by one batched
+	// API call: alerts sharing a symbol ride the same quote.
+	seen := make(map[string]struct{}, len(liveAlerts))
+	symbols := make([]string, 0, len(liveAlerts))
 	for _, alert := range liveAlerts {
-		alertsBySymbol[alert.Symbol] = append(alertsBySymbol[alert.Symbol], alert)
-	}
-
-	var symbols []string
-	for symbol := range alertsBySymbol {
-		symbols = append(symbols, symbol)
+		if _, dup := seen[alert.Symbol]; !dup {
+			seen[alert.Symbol] = struct{}{}
+			symbols = append(symbols, alert.Symbol)
+		}
 	}
 
 	prices, err := ac.priceService.GetPrices(symbols)
@@ -139,13 +139,9 @@ func (ac *AlertChecker) CheckAlerts(ctx context.Context) error {
 	}
 
 	triggeredAlerts := []alerts.PriceAlert{}
-
-	for _, symbolAlerts := range alertsBySymbol {
-		// Check each alert for this symbol
-		for _, alert := range symbolAlerts {
-			if alert.IsTriggeredBy(prices[alert.Symbol]) {
-				triggeredAlerts = append(triggeredAlerts, alert)
-			}
+	for _, alert := range liveAlerts {
+		if alert.IsTriggeredBy(prices[alert.Symbol]) {
+			triggeredAlerts = append(triggeredAlerts, alert)
 		}
 	}
 
