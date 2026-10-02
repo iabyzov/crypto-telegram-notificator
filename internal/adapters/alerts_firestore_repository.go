@@ -106,32 +106,19 @@ func (r *AlertsFirestoreRepository) AddAlert(ctx context.Context, alert alerts.P
 
 // GetAllAlerts retrieves all alerts from Firestore
 func (r *AlertsFirestoreRepository) GetAllAlerts(ctx context.Context) ([]alerts.PriceAlert, error) {
-	collection := r.alertCollection()
-	docs, err := collection.Documents(ctx).GetAll()
-	if err != nil {
-		return nil, err
-	}
-
-	var result []alerts.PriceAlert
-	for _, doc := range docs {
-		var model AlertFirestoreModel
-		if err := doc.DataTo(&model); err != nil {
-			continue
-		}
-		domainAlert, err := mapToDomainModel(model, doc.Ref.ID)
-		if err != nil {
-			continue
-		}
-		result = append(result, domainAlert)
-	}
-
-	return result, nil
+	return alertsFrom(ctx, r.alertCollection().Documents(ctx))
 }
 
 // GetAlertsByUserID retrieves all alerts for a specific user from Firestore
 func (r *AlertsFirestoreRepository) GetAlertsByUserID(ctx context.Context, userID int64) ([]alerts.PriceAlert, error) {
-	collection := r.alertCollection()
-	docs, err := collection.Where("user_id", "==", userID).Documents(ctx).GetAll()
+	return alertsFrom(ctx, r.alertCollection().Where("user_id", "==", userID).Documents(ctx))
+}
+
+// alertsFrom drains a Firestore query into domain alerts. Documents that
+// fail to decode (or whose type string is unparseable) are skipped, not
+// failed: one bad document must not block the rest of the load.
+func alertsFrom(ctx context.Context, iter *firestore.DocumentIterator) ([]alerts.PriceAlert, error) {
+	docs, err := iter.GetAll()
 	if err != nil {
 		return nil, err
 	}
