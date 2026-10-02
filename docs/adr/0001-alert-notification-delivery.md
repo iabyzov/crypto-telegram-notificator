@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-09-29, implementation of issue #22; decision originally resolved during the #11 grilling session)
+Accepted (2026-09-29, implementation of issues #22 and #29; decision originally resolved during the #11 grilling session)
 
 ## Context
 
@@ -26,11 +26,25 @@ Notification delivery is at-least-once, send-first:
    the alert stays in storage, stamped with `delivery_failed_at` (Unix
    milliseconds, `omitempty` on the Firestore model) via
    `AlertsRepository.MarkDeliveryFailed`. The next scheduled run (every 5
-   minutes) picks it up and retries delivery.
-4. **Dead-lettering is a separate decision** (issue #29): alerts that keep
-   failing for more than an hour will be deleted with an operator-visible
-   signal (counter + structured log). This ADR covers only the retry-and-keep
-   loop and the timestamp seam that dead-lettering reads.
+   minutes) picks it up and retries delivery. The stamp records the FIRST
+   failure: an alert already carrying a stamp keeps its earliest one, so the
+   dead-letter deadline measures from the first failure, not the most
+   recent one.
+4. **Dead-letter after one hour** (issue #29): before any pricing or
+   delivery, each run sweeps the fetched alerts for ones whose delivery has
+   been failing for over an hour, keyed on age alone (whether or not the
+   alert still triggers - a retraced alert that lingers is dead-lettered
+   too, so failures never linger invisibly). A swept alert is terminally
+   deleted, incremented into `telegram_notification_errors_total`, and
+   reported via an slog ERROR with its details, so the loss is observable
+   (counter + log) instead of silent. The sweep runs before price fetching
+   so dead alerts never spend CoinMarketCap quota. If the terminal delete
+   itself fails, the alert stays and the next run's sweep retries it.
+
+   The one-hour window and the first-failure stamp make the deadline
+   self-limiting: an alert can fail at most ~12 scheduler runs before it is
+   terminally removed, bounded by the injected clock in tests and the wall
+   clock in production.
 
 The retry schedule and failure timestamps run on an injected clock
 (`checkerClock`), so tests observe the exact backoff without real sleeps and
@@ -47,6 +61,14 @@ dead-lettering (#29) can control the 1-hour window deterministically.
 - A total-failure run takes up to ~14s per triggered alert (2+4+8s waits plus
   request time); the 5-minute scheduler interval absorbs this at current
   alert volumes.
+- Dead-lettering trades redelivery for observability: an alert failing for
+  over an hour is removed without the user ever receiving it. The user is
+  not notified of the loss; operators are (counter + ERROR log). That is
+  the accepted alternative to unbounded retry queues on a serverless
+  scheduler.
+- `telegram_notification_errors_total` increments per failed attempt and once
+  more per dead-lettered alert, so Cloud Monitoring can alarm on both
+  transient blips and terminal losses (ticket #33's counter contract).
 - `AlertsRepository` grows `MarkDeliveryFailed`; every implementation
   (Firestore, test fakes) must persist the timestamp in place, without
   rewriting the rest of the document (a Firestore field `Update`, which

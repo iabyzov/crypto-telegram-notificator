@@ -219,6 +219,7 @@ Users can interact with the bot using these commands:
      - Sends the Telegram notification first, retrying with 2s/4s/8s backoff
      - Deletes the alert only after the notification is delivered
      - If delivery keeps failing, the alert stays in Firestore (stamped with `delivery_failed_at`) and is retried on the next scheduled run
+     - An alert failing delivery for over 1 hour is terminally dead-lettered: deleted, counted in `telegram_notification_errors_total`, and logged as an error so the loss is observable
 
 4. **Notifications**:
    - Users receive a message when their alert is triggered

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -18,6 +19,14 @@ var checkAlertDuration = promauto.NewHistogram(prometheus.HistogramOpts{
 	Name:    "price_check_duration_seconds",
 	Help:    "End-to-end duration of CheckAlerts() runs in seconds",
 	Buckets: []float64{0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0},
+})
+
+// telegramNotificationErrors counts every failed Telegram notification
+// attempt and every terminal dead-lettering, so Cloud Monitoring can alarm
+// on delivery failures (ticket #33).
+var telegramNotificationErrors = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "telegram_notification_errors_total",
+	Help: "Total failed Telegram notification attempts and dead-lettered alerts",
 })
 
 // checkerClock is the checker's view of time: when delivery failures are
@@ -78,6 +87,9 @@ func NewAlertCheckerWithClock(
 // notification is sent first and the alert is deleted only after a successful
 // send; a notification that fails all retry attempts keeps its alert in
 // storage, stamped with delivery_failed_at, for the next scheduled run.
+// Before any pricing or delivery, alerts whose delivery has been failing for
+// more than an hour are terminally dead-lettered (issue #29): deleted,
+// counted, and logged - the loss is observable instead of silent.
 func (ac *AlertChecker) CheckAlerts(ctx context.Context) error {
 	start := time.Now()
 	defer func() {
@@ -94,9 +106,25 @@ func (ac *AlertChecker) CheckAlerts(ctx context.Context) error {
 		return nil
 	}
 
+	// Dead-letter sweep: alerts failing delivery for over an hour are
+	// terminal. Keyed on age alone, whether or not they still trigger; the
+	// sweep runs before pricing so dead alerts never spend CoinMarketCap
+	// quota.
+	liveAlerts := make([]alerts.PriceAlert, 0, len(allAlerts))
+	for _, alert := range allAlerts {
+		if ac.deadLetterIfExpired(ctx, alert) {
+			continue
+		}
+		liveAlerts = append(liveAlerts, alert)
+	}
+
+	if len(liveAlerts) == 0 {
+		return nil
+	}
+
 	// Group alerts by symbol to minimize API calls
 	alertsBySymbol := make(map[string][]alerts.PriceAlert)
-	for _, alert := range allAlerts {
+	for _, alert := range liveAlerts {
 		alertsBySymbol[alert.Symbol] = append(alertsBySymbol[alert.Symbol], alert)
 	}
 
@@ -145,16 +173,56 @@ func (ac *AlertChecker) CheckAlerts(ctx context.Context) error {
 	return nil
 }
 
+// deliveryFailureDeadline is how long an alert may keep failing delivery
+// before it is terminally dead-lettered (ADR-0001, issue #29). Counted from
+// the FIRST failure: later failures keep the earliest stamp.
+const deliveryFailureDeadline = time.Hour
+
+// deadLetterIfExpired terminally dead-letters one alert when its delivery
+// has been failing for over the deadline: delete from storage, increment
+// telegram_notification_errors_total, and emit an slog ERROR with the
+// alert's details so the loss is observable. It reports whether the alert
+// was dead-lettered (and must be skipped by the rest of the run).
+func (ac *AlertChecker) deadLetterIfExpired(ctx context.Context, alert alerts.PriceAlert) bool {
+	if alert.DeliveryFailedAt.IsZero() {
+		return false
+	}
+	if ac.clock.Now().Sub(alert.DeliveryFailedAt) <= deliveryFailureDeadline {
+		return false
+	}
+
+	if err := ac.alertsRepository.DeleteAlert(ctx, alert); err != nil {
+		// Not deleted: keep it in the run so a later sweep can retry the
+		// dead-lettering; storage state is unchanged.
+		log.Printf("Failed to delete expired alert %s during dead-lettering: %v", alert.Id, err)
+		return false
+	}
+	telegramNotificationErrors.Inc()
+	slog.Error("alert dead-lettered: notification delivery failed for over an hour",
+		"alert_id", alert.Id,
+		"user_id", alert.UserID,
+		"symbol", alert.Symbol,
+		"target_price", alert.TargetPrice,
+		"alert_type", alert.Type.String(),
+		"first_failed_at", alert.DeliveryFailedAt.Format(time.RFC3339),
+	)
+	return true
+}
+
 // deliverAlert delivers one triggered alert at-least-once: send the
 // notification with retry backoff, delete the alert only after a successful
 // send, and on total failure stamp delivery_failed_at and keep the alert for
-// the next scheduled run.
+// the next scheduled run. The stamp records the FIRST failure: an alert
+// already carrying a stamp keeps its earliest one, so the dead-letter
+// deadline measures from the first failure.
 func (ac *AlertChecker) deliverAlert(ctx context.Context, alert alerts.PriceAlert, currentPrice float64) {
 	if err := ac.sendNotificationWithRetry(ctx, alert, currentPrice); err != nil {
 		log.Printf("Notification delivery failed for alert %s (user %d, %s): %v",
 			alert.Id, alert.UserID, alert.Symbol, err)
-		if markErr := ac.alertsRepository.MarkDeliveryFailed(ctx, alert, ac.clock.Now()); markErr != nil {
-			log.Printf("Failed to mark alert %s as delivery-failed: %v", alert.Id, markErr)
+		if alert.DeliveryFailedAt.IsZero() {
+			if markErr := ac.alertsRepository.MarkDeliveryFailed(ctx, alert, ac.clock.Now()); markErr != nil {
+				log.Printf("Failed to mark alert %s as delivery-failed: %v", alert.Id, markErr)
+			}
 		}
 		return
 	}
@@ -173,6 +241,9 @@ func (ac *AlertChecker) sendNotificationWithRetry(ctx context.Context, alert ale
 		if err = ac.sendNotification(alert, currentPrice); err == nil {
 			return nil
 		}
+		// Every failed attempt is an operator-visible notification error
+		// (ticket #33), not just the terminal give-up.
+		telegramNotificationErrors.Inc()
 		if attempt >= len(notificationRetryDelays) {
 			return err
 		}
