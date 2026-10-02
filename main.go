@@ -32,22 +32,21 @@ var (
 	})
 )
 
+// mustEnv returns the value of the required environment variable key,
+// terminating the process when it is unset or empty.
+func mustEnv(key string) string {
+	value := os.Getenv(key)
+	if value == "" {
+		log.Fatalf("%s environment variable is not set", key)
+	}
+	return value
+}
+
 func main() {
 	// Get environment variables
-	botToken := os.Getenv("TELEGRAM_BOT_TOKEN")
-	if botToken == "" {
-		log.Fatal("TELEGRAM_BOT_TOKEN environment variable is not set")
-	}
-
-	cmcAPIKey := os.Getenv("CMC_API_KEY")
-	if cmcAPIKey == "" {
-		log.Fatal("CMC_API_KEY environment variable is not set")
-	}
-
-	projectID := os.Getenv("GCP_PROJECT_ID")
-	if projectID == "" {
-		log.Fatal("GCP_PROJECT_ID environment variable is not set")
-	}
+	botToken := mustEnv("TELEGRAM_BOT_TOKEN")
+	cmcAPIKey := mustEnv("CMC_API_KEY")
+	projectID := mustEnv("GCP_PROJECT_ID")
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -69,10 +68,7 @@ func main() {
 	}
 
 	// Initialize Redis client
-	redisURL := os.Getenv("UPSTASH_REDIS_URL")
-	if redisURL == "" {
-		log.Fatal("UPSTASH_REDIS_URL environment variable is not set")
-	}
+	redisURL := mustEnv("UPSTASH_REDIS_URL")
 	redisOpt, err := redis.ParseURL(redisURL)
 	if err != nil {
 		log.Fatalf("Failed to parse Redis URL: %v", err)
