@@ -145,11 +145,26 @@ func (ac *AlertChecker) CheckAlerts(ctx context.Context) error {
 		}
 	}
 
-	var wg sync.WaitGroup
-	ch := make(chan alerts.PriceAlert, len(triggeredAlerts))
+	ac.deliverTriggeredAlerts(ctx, triggeredAlerts, prices)
 
-	const maxWorkers = 5
-	for i := 0; i < min(maxWorkers, len(triggeredAlerts)); i++ {
+	return nil
+}
+
+// maxDeliveryWorkers bounds how many triggered-alert notifications one run
+// delivers concurrently: enough to parallelize a burst's Telegram
+// round-trips (each carrying up to 14s of retry backoff), few enough that a
+// mass-triggered run never opens an unbounded number of concurrent requests.
+const maxDeliveryWorkers = 5
+
+// deliverTriggeredAlerts fans the run's triggered alerts out to a pool of at
+// most maxDeliveryWorkers concurrent deliveries. It returns only after every
+// alert has gone through deliverAlert, whose per-alert at-least-once contract
+// (send first, delete only after a successful send) applies to each one.
+func (ac *AlertChecker) deliverTriggeredAlerts(ctx context.Context, triggered []alerts.PriceAlert, prices map[string]float64) {
+	var wg sync.WaitGroup
+	ch := make(chan alerts.PriceAlert, len(triggered))
+
+	for i := 0; i < min(maxDeliveryWorkers, len(triggered)); i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -159,14 +174,12 @@ func (ac *AlertChecker) CheckAlerts(ctx context.Context) error {
 		}()
 	}
 
-	for _, alert := range triggeredAlerts {
+	for _, alert := range triggered {
 		ch <- alert
 	}
 
 	close(ch)
 	wg.Wait()
-
-	return nil
 }
 
 // deliveryFailureDeadline is how long an alert may keep failing delivery

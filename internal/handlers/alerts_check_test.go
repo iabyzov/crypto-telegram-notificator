@@ -182,6 +182,72 @@ func TestCheckAlertsBatchesAndDedupesSymbols(t *testing.T) {
 	}
 }
 
+// TestCheckAlertsFansOutDeliveryWithinWorkerBound pins the delivery fan-out
+// the worker pool exists for: a run with more triggered alerts than delivery
+// workers still delivers every alert exactly once to its own user, and the
+// deliveries overlap — bounded by the pool, so a burst of triggered alerts
+// parallelizes its Telegram round-trips without opening an unbounded number
+// of concurrent requests.
+func TestCheckAlertsFansOutDeliveryWithinWorkerBound(t *testing.T) {
+	h := newCheckerHarness(t, 51000.0)
+
+	// More triggered alerts than the pool's workers: the fan-out must not
+	// drop the ones beyond the first wave.
+	const alertCount = 8
+	for user := int64(1); user <= alertCount; user++ {
+		h.repo.AddAlert(context.Background(), alerts.PriceAlert{
+			Symbol: "BTC", TargetPrice: 50000, UserID: user, Type: alerts.More,
+		})
+	}
+
+	// Each send lingers briefly inside the transport while a counter tracks
+	// how many deliveries are in flight at once; the peak makes the fan-out
+	// observable. A sequential implementation deterministically peaks at 1.
+	var mu sync.Mutex
+	inFlight, peak := 0, 0
+	h.transport.onSend = func() {
+		mu.Lock()
+		inFlight++
+		peak = max(peak, inFlight)
+		mu.Unlock()
+		time.Sleep(25 * time.Millisecond)
+		mu.Lock()
+		inFlight--
+		mu.Unlock()
+	}
+
+	if err := h.checker.CheckAlerts(context.Background()); err != nil {
+		t.Fatalf("CheckAlerts: %v", err)
+	}
+
+	// Every alert was delivered exactly once to its own user.
+	messages := h.transport.sentMessages()
+	if got := len(messages); got != alertCount {
+		t.Fatalf("every triggered alert must be delivered, got %d of %d messages", got, alertCount)
+	}
+	seen := make(map[int64]bool, alertCount)
+	for _, m := range messages {
+		if seen[m.ChatID] {
+			t.Errorf("user %d received more than one notification", m.ChatID)
+		}
+		seen[m.ChatID] = true
+	}
+	if got := len(h.repo.added()); got != 0 {
+		t.Errorf("all delivered alerts must be deleted, %d remain", got)
+	}
+
+	// Deliveries overlapped, and never exceeded the worker pool's bound.
+	mu.Lock()
+	observed := peak
+	mu.Unlock()
+	if observed < 2 {
+		t.Errorf("deliveries must overlap instead of serializing each Telegram round-trip, peak concurrent sends = %d", observed)
+	}
+	if observed > 5 {
+		t.Errorf("concurrent deliveries must stay bounded by the delivery worker pool, peak = %d", observed)
+	}
+}
+
 // TestCheckAlertsSendFirstOrder pins the at-least-once invariant at the
 // delivery boundary: at the moment the notification reaches Telegram, the
 // alert is still in storage - it is deleted only after the send succeeds.
