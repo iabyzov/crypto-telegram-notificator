@@ -38,9 +38,6 @@ func NewPriceServiceWithEndpoint(cmcAPIKey string, cache *redis.Client, cacheTTL
 	}
 }
 
-const retries = 5
-const retryDelay = 2 * time.Second
-
 type price struct {
 	Data map[string]struct {
 		Quote map[string]struct {

@@ -10,7 +10,6 @@ import (
 
 // AlertFirestoreModel represents the data structure for storing alerts in Firestore
 type AlertFirestoreModel struct {
-	DocID       string  `firestore:"-"`
 	UserID      int64   `firestore:"user_id"`
 	CoinID      string  `firestore:"coin_id"`
 	TargetPrice float64 `firestore:"target_price"`
