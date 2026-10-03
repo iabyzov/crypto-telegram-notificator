@@ -28,7 +28,6 @@ import (
 	"testing"
 	"time"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/iabyzov/coinmarketcap-telegram-bot/internal/services"
 	"github.com/redis/go-redis/v9"
 )
@@ -167,10 +166,7 @@ func newAlertCheckerHarness(t *testing.T, prices map[string]float64) *alertCheck
 
 	// A second BotAPI on the same stub transport: GetMe is answered by the
 	// stub's generic path, sendMessage requests get recorded.
-	bot, err := tgbotapi.NewBotAPIWithClient("test-token", tgbotapi.APIEndpoint, h.transport)
-	if err != nil {
-		t.Fatalf("creating bot with stub transport: %v", err)
-	}
+	bot := newStubBot(t, h.transport)
 
 	priceService := services.NewPriceService("test-cmc-key", deadCacheClient(t), time.Minute)
 	checker := NewAlertChecker(h.repo, priceService, bot)
@@ -283,15 +279,12 @@ func TestScheduledCheckWithRepositoryFailureReturnsErrorAndTouchesNothing(t *tes
 
 	repo := &fakeAlertsRepository{fatalErr: injected}
 	transport := &stubTelegramTransport{}
-	bot, err := tgbotapi.NewBotAPIWithClient("test-token", tgbotapi.APIEndpoint, transport)
-	if err != nil {
-		t.Fatalf("creating bot with stub transport: %v", err)
-	}
+	bot := newStubBot(t, transport)
 	cmc := newCMCStub(t, map[string]float64{"BTC": 61234.50})
 	priceService := services.NewPriceService("test-cmc-key", deadCacheClient(t), time.Minute)
 	checker := NewAlertChecker(repo, priceService, bot)
 
-	err = checker.CheckAlerts(context.Background())
+	err := checker.CheckAlerts(context.Background())
 	if !errors.Is(err, injected) {
 		t.Fatalf("CheckAlerts must fail with the repository error, got %v", err)
 	}

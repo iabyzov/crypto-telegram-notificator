@@ -21,6 +21,10 @@ type AlertsRepository interface {
 	AddAlert(ctx context.Context, alert alerts.PriceAlert)
 	GetAllAlerts(ctx context.Context) ([]alerts.PriceAlert, error)
 	GetAlertsByUserID(ctx context.Context, userID int64) ([]alerts.PriceAlert, error)
+	// GetAlertByID returns the alert stored under alertID when it belongs
+	// to userID, and nil when no such alert exists — including when the id
+	// names another user's alert or no document at all.
+	GetAlertByID(ctx context.Context, userID int64, alertID string) (*alerts.PriceAlert, error)
 	DeleteAlert(ctx context.Context, alert alerts.PriceAlert) error
 	// MarkDeliveryFailed records that the alert's notification could not be
 	// delivered at failedAt, so the next scheduled check retries it.
@@ -228,36 +232,26 @@ func (s *TelegramWebhookHandler) handleDeleteAlert(message *tgbotapi.Message) {
 
 	ctx := context.Background()
 
-	// First, verify the alert exists and belongs to the user
-	userAlerts, err := s.alertsRepository.GetAlertsByUserID(ctx, message.Chat.ID)
+	// Look the alert up directly: nil means the id names no alert of this
+	// user's (it may belong to someone else or not exist at all).
+	alert, err := s.alertsRepository.GetAlertByID(ctx, message.Chat.ID, alertID)
 	if err != nil {
 		s.sendMessage(message.Chat.ID, "Failed to retrieve alerts. Please try again later.")
 		log.Printf("Error retrieving alerts for user %d: %v", message.Chat.ID, err)
 		return
 	}
-
-	var alertToDelete *alerts.PriceAlert
-	for _, alert := range userAlerts {
-		if alert.Id == alertID {
-			alertToDelete = &alert
-			break
-		}
-	}
-
-	if alertToDelete == nil {
+	if alert == nil {
 		s.sendMessage(message.Chat.ID, "Alert not found. Use /listalerts to see your alerts.")
 		return
 	}
 
-	// Delete the alert
-	err = s.alertsRepository.DeleteAlert(ctx, *alertToDelete)
-	if err != nil {
+	if err := s.alertsRepository.DeleteAlert(ctx, *alert); err != nil {
 		s.sendMessage(message.Chat.ID, "Failed to delete alert. Please try again later.")
 		log.Printf("Error deleting alert %s for user %d: %v", alertID, message.Chat.ID, err)
 		return
 	}
 
-	s.sendMessage(message.Chat.ID, fmt.Sprintf("Alert deleted: %s at $%.2f", alertToDelete.Symbol, alertToDelete.TargetPrice))
+	s.sendMessage(message.Chat.ID, fmt.Sprintf("Alert deleted: %s at $%.2f", alert.Symbol, alert.TargetPrice))
 }
 
 func (s *TelegramWebhookHandler) sendMessage(chatID int64, text string) {

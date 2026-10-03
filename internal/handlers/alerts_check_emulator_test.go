@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"cloud.google.com/go/firestore"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
 	"github.com/iabyzov/coinmarketcap-telegram-bot/internal/adapters"
 	"github.com/iabyzov/coinmarketcap-telegram-bot/internal/domain/alerts"
@@ -67,10 +66,7 @@ func TestCheckAlertsWithRealFirestoreAtLeastOnceLoop(t *testing.T) {
 
 	// Real BotAPI client with the stub transport.
 	transport := &stubTelegramTransport{}
-	bot, err := tgbotapi.NewBotAPIWithClient("test-token", tgbotapi.APIEndpoint, transport)
-	if err != nil {
-		t.Fatalf("creating bot with stub transport: %v", err)
-	}
+	bot := newStubBot(t, transport)
 
 	dumpStored := func(label string) {
 		t.Helper()

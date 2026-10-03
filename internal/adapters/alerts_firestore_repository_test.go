@@ -15,20 +15,14 @@ func TestDeliveryFailedAtRoundTrip(t *testing.T) {
 		UserID: 42, CoinID: "BTC", TargetPrice: 50000, Type: "More",
 		DeliveryFailedAt: timeToMs(failedAt),
 	}
-	loaded, err := mapToDomainModel(model, "doc-1")
-	if err != nil {
-		t.Fatalf("mapToDomainModel: %v", err)
-	}
+	loaded := mapToDomainModel(model, "doc-1")
 	if !loaded.DeliveryFailedAt.Equal(failedAt) {
 		t.Errorf("loaded stamp = %v, want %v", loaded.DeliveryFailedAt, failedAt)
 	}
 
 	// A document written before the field existed (absent) loads as never
 	// failed: zero maps to the zero time.
-	legacy, err := mapToDomainModel(AlertFirestoreModel{UserID: 42, CoinID: "BTC", TargetPrice: 1, Type: "Less"}, "doc-2")
-	if err != nil {
-		t.Fatalf("mapToDomainModel (legacy): %v", err)
-	}
+	legacy := mapToDomainModel(AlertFirestoreModel{UserID: 42, CoinID: "BTC", TargetPrice: 1, Type: "Less"}, "doc-2")
 	if !legacy.DeliveryFailedAt.IsZero() {
 		t.Errorf("missing delivery_failed_at must load as zero time, got %v", legacy.DeliveryFailedAt)
 	}
