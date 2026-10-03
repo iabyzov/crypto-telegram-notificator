@@ -20,14 +20,6 @@ type AlertIntent struct {
 	Explanation string
 }
 
-// LLMClient abstracts LLM calls so providers (OpenAI, OpenWebUI, OpenRouter,
-// Groq, Ollama, mock) can be swapped without touching handlers. Any
-// OpenAI-compatible endpoint works because they all speak the /v1/chat/completions
-// protocol.
-type LLMClient interface {
-	ParseAlertIntent(ctx context.Context, text string) (*AlertIntent, error)
-}
-
 // alertIntentSystemPrompt instructs the model to return strict JSON describing
 // the user's alert intent.
 //
@@ -72,14 +64,15 @@ type rawAlertIntent struct {
 	Explanation string  `json:"explanation"`
 }
 
-// OpenAIClient implements LLMClient using OpenAI chat completions with JSON
-// response format. It works against any OpenAI-compatible endpoint.
+// OpenAIClient parses alert intents using OpenAI chat completions with
+// JSON response format. It works against any OpenAI-compatible endpoint;
+// handlers consume it through their own AlertIntentParser interface.
 type OpenAIClient struct {
 	client *openai.Client
 	model  string
 }
 
-// NewOpenAIClient creates an OpenAI-compatible LLMClient.
+// NewOpenAIClient creates an OpenAI-compatible alert-intent parser.
 //
 // baseURL lets you point the client at any OpenAI-compatible endpoint — your
 // OpenWebUI instance (e.g. "https://your-host/v1"), OpenRouter, Groq, or

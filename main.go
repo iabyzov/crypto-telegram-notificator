@@ -4,8 +4,8 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"net/http/pprof"
 	"os"
-
 	"time"
 
 	"cloud.google.com/go/firestore"
@@ -17,8 +17,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
-
-	"net/http/pprof"
 )
 
 var (
@@ -32,76 +30,23 @@ var (
 	})
 )
 
-func main() {
-	// Get environment variables
-	botToken := os.Getenv("TELEGRAM_BOT_TOKEN")
-	if botToken == "" {
-		log.Fatal("TELEGRAM_BOT_TOKEN environment variable is not set")
+// mustEnv returns the value of the required environment variable key,
+// terminating the process when it is unset or empty.
+func mustEnv(key string) string {
+	value := os.Getenv(key)
+	if value == "" {
+		log.Fatalf("%s environment variable is not set", key)
 	}
+	return value
+}
 
-	cmcAPIKey := os.Getenv("CMC_API_KEY")
-	if cmcAPIKey == "" {
-		log.Fatal("CMC_API_KEY environment variable is not set")
-	}
-
-	projectID := os.Getenv("GCP_PROJECT_ID")
-	if projectID == "" {
-		log.Fatal("GCP_PROJECT_ID environment variable is not set")
-	}
-
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8000"
-	}
-
-	// Initialize Firestore client
-	ctx := context.Background()
-	firestoreClient, err := firestore.NewClient(ctx, projectID)
-	if err != nil {
-		log.Fatalf("Failed to create Firestore client: %v", err)
-	}
-	defer firestoreClient.Close()
-
-	// Initialize Telegram bot
-	bot, err := tgbotapi.NewBotAPI(botToken)
-	if err != nil {
-		log.Fatalf("Failed to create Telegram bot: %v", err)
-	}
-
-	// Initialize Redis client
-	redisURL := os.Getenv("UPSTASH_REDIS_URL")
-	if redisURL == "" {
-		log.Fatal("UPSTASH_REDIS_URL environment variable is not set")
-	}
-	redisOpt, err := redis.ParseURL(redisURL)
-	if err != nil {
-		log.Fatalf("Failed to parse Redis URL: %v", err)
-	}
-	rdb := redis.NewClient(redisOpt)
-
-	var alertLlmParser handlers.AlertIntentParser
-	llmAPIKey := os.Getenv("LLM_API_KEY")
-	llmBaseUrl := os.Getenv("LLM_BASE_URL")
-	llmModel := os.Getenv("LLM_MODEL")
-	webhookSecret := os.Getenv("TELEGRAM_WEBHOOK_SECRET")
-	if webhookSecret == "" {
-		log.Printf("WARNING: TELEGRAM_WEBHOOK_SECRET is not set; /webhook will accept requests from anyone. " +
-			"Set it and pass it to setWebhook's secret_token to enable verification.")
-	}
-	if llmAPIKey == "" || llmBaseUrl == "" {
-		log.Printf("llm integration is disabled")
-	} else {
-		log.Printf("llm integration is enabled")
-		alertLlmParser = services.NewOpenAIClient(llmAPIKey, llmBaseUrl, llmModel)
-	}
-
-	// Initialize repositories and services
-	alertsRepository := adapters.NewAlertsFirestoreRepository(firestoreClient)
-	priceService := services.NewPriceService(cmcAPIKey, rdb, 60*time.Second)
-	alertChecker := handlers.NewAlertChecker(alertsRepository, priceService, bot)
-	telegramHandler := handlers.NewTelegramWebhookHandler(bot, alertsRepository, alertLlmParser, webhookSecret)
-
-	// Create HTTP server with handlers
+// newMainMux builds the service's HTTP surface from its two wired handlers:
+// the Telegram webhook, the Cloud Scheduler-triggered alert check, the pprof
+// debugging routes, and the health check. Each request to /webhook and
+// /check-alerts is counted on the corresponding endpoint counter, whatever
+// the outcome. The Prometheus /metrics endpoint is deliberately not part of
+// this surface: it is served on its own port.
+func newMainMux(alertChecker *handlers.AlertChecker, telegramHandler *handlers.TelegramWebhookHandler) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/debug/pprof/", pprof.Index)
 	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
@@ -136,6 +81,66 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("OK"))
 	})
+
+	return mux
+}
+
+func main() {
+	// Get environment variables
+	botToken := mustEnv("TELEGRAM_BOT_TOKEN")
+	cmcAPIKey := mustEnv("CMC_API_KEY")
+	projectID := mustEnv("GCP_PROJECT_ID")
+
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8000"
+	}
+
+	// Initialize Firestore client
+	ctx := context.Background()
+	firestoreClient, err := firestore.NewClient(ctx, projectID)
+	if err != nil {
+		log.Fatalf("Failed to create Firestore client: %v", err)
+	}
+	defer firestoreClient.Close()
+
+	// Initialize Telegram bot
+	bot, err := tgbotapi.NewBotAPI(botToken)
+	if err != nil {
+		log.Fatalf("Failed to create Telegram bot: %v", err)
+	}
+
+	// Initialize Redis client
+	redisURL := mustEnv("UPSTASH_REDIS_URL")
+	redisOpt, err := redis.ParseURL(redisURL)
+	if err != nil {
+		log.Fatalf("Failed to parse Redis URL: %v", err)
+	}
+	rdb := redis.NewClient(redisOpt)
+
+	var alertLlmParser handlers.AlertIntentParser
+	llmAPIKey := os.Getenv("LLM_API_KEY")
+	llmBaseUrl := os.Getenv("LLM_BASE_URL")
+	llmModel := os.Getenv("LLM_MODEL")
+	webhookSecret := os.Getenv("TELEGRAM_WEBHOOK_SECRET")
+	if webhookSecret == "" {
+		log.Printf("WARNING: TELEGRAM_WEBHOOK_SECRET is not set; /webhook will accept requests from anyone. " +
+			"Set it and pass it to setWebhook's secret_token to enable verification.")
+	}
+	if llmAPIKey == "" || llmBaseUrl == "" {
+		log.Printf("llm integration is disabled")
+	} else {
+		log.Printf("llm integration is enabled")
+		alertLlmParser = services.NewOpenAIClient(llmAPIKey, llmBaseUrl, llmModel)
+	}
+
+	// Initialize repositories and services
+	alertsRepository := adapters.NewAlertsFirestoreRepository(firestoreClient)
+	priceService := services.NewPriceService(cmcAPIKey, rdb, 60*time.Second)
+	alertChecker := handlers.NewAlertChecker(alertsRepository, priceService, bot)
+	telegramHandler := handlers.NewTelegramWebhookHandler(bot, alertsRepository, alertLlmParser, webhookSecret)
+
+	mux := newMainMux(alertChecker, telegramHandler)
 
 	promMux := http.NewServeMux()
 	promMux.Handle("/metrics", promhttp.Handler())

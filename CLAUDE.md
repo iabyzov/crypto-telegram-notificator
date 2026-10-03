@@ -37,7 +37,7 @@ gcloud run deploy crypto-telegram-notificator \
 
 - `internal/domain/alerts/` — domain models (`PriceAlert`, `AlertType` enum: `More`/`Less`)
 - `internal/adapters/` — Firestore repository implementing `AlertsRepository` interface
-- `internal/services/` — `PriceService` batches CoinMarketCap API calls by grouping alerts by symbol
+- `internal/services/` — `PriceService` fetches quotes for a batch of symbols in a single CoinMarketCap API call
 - `internal/handlers/` — two handlers: `TelegramWebhookHandler` (incoming bot commands) and `AlertChecker` (scheduled price evaluation)
 
 **HTTP endpoints registered in `main.go`:**
@@ -50,7 +50,7 @@ gcloud run deploy crypto-telegram-notificator \
 1. Cloud Scheduler → `GET /check-alerts`
 2. `AlertChecker.CheckAlerts()` fetches all alerts from Firestore
 3. Dead-letter sweep: alerts whose delivery has been failing for over 1 hour (keyed on age alone, before any CMC quota is spent) are deleted, counted in `telegram_notification_errors_total`, and reported via slog ERROR
-4. Groups by symbol → single batch request to CoinMarketCap API
+4. Deduplicates symbols → single batch request to CoinMarketCap API
 5. Compares each alert's target price against current price using the domain `PriceAlert.IsTriggeredBy` (More: at-or-above, Less: at-or-below)
 6. Sends Telegram notification with 2s/4s/8s retry backoff → deletes triggered alert only after a successful send; total failure stamps `delivery_failed_at` (first failure) and keeps the alert for the next run
 

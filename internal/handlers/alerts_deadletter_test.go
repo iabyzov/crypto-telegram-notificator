@@ -4,15 +4,11 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"net/http"
-	"net/http/httptest"
 	"strconv"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/iabyzov/coinmarketcap-telegram-bot/internal/domain/alerts"
 	"github.com/iabyzov/coinmarketcap-telegram-bot/internal/services"
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -295,14 +291,10 @@ func (f *flakyDeleteRepository) DeleteAlert(ctx context.Context, alert alerts.Pr
 // clock), so a run can be driven through a repository with injected faults.
 func (h *checkerHarness) newCheckerOverRepo(t *testing.T, repo AlertsRepository) *AlertChecker {
 	t.Helper()
-	bot, err := tgbotapi.NewBotAPIWithClient("test-token", tgbotapi.APIEndpoint, h.transport)
-	if err != nil {
-		t.Fatalf("creating bot with stub transport: %v", err)
-	}
 	return NewAlertCheckerWithClock(
 		repo,
 		services.NewPriceServiceWithEndpoint("test-cmc-key", nil, time.Minute, h.cmc.URL),
-		bot,
+		newStubBot(t, h.transport),
 		h.clock,
 	)
 }
@@ -394,50 +386,28 @@ func TestCheckAlertsFailedTerminalDeleteKeepsAlertForNextSweep(t *testing.T) {
 
 // TestCheckAlertsSweepSpendsNoQuotaOnDeadAlerts pins the ADR's quota choice:
 // the dead-letter sweep runs before price fetching, so a run whose only alert
-// is dead-lettered never reaches the pricing API at all.
+// is dead-lettered never reaches the pricing API at all. The alert would
+// trigger at the quoted price - only its age takes it out of the run, which
+// is what proves the sweep, not the trigger filter, kept it from pricing.
 func TestCheckAlertsSweepSpendsNoQuotaOnDeadAlerts(t *testing.T) {
-	var cmcRequests atomic.Int32
-	cmc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		cmcRequests.Add(1)
-		_ = r // the response shape is irrelevant: the request must not happen
-		w.Write([]byte(`{"data":{"BTC":{"quote":{"USD":{"price":51000.0}}}}}`))
-	}))
-	t.Cleanup(cmc.Close)
+	h := newCheckerHarness(t, 51000.0)
 
-	transport := &stubTelegramTransport{}
-	bot, err := tgbotapi.NewBotAPIWithClient("test-token", tgbotapi.APIEndpoint, transport)
-	if err != nil {
-		t.Fatalf("creating bot with stub transport: %v", err)
-	}
-
-	repo := &fakeAlertsRepository{}
-	clock := &fakeClock{now: time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)}
-	checker := NewAlertCheckerWithClock(
-		repo,
-		services.NewPriceServiceWithEndpoint("test-cmc-key", nil, time.Minute, cmc.URL),
-		bot,
-		clock,
-	)
-
-	// The only stored alert is 2 hours past its first failure and would
-	// trigger at the quoted price - it must be swept out before pricing.
-	repo.AddAlert(context.Background(), alerts.PriceAlert{
+	h.storeStampedAlert(t, alerts.PriceAlert{
 		Symbol: "BTC", TargetPrice: 50000, UserID: 42, Type: alerts.More,
-		DeliveryFailedAt: clock.now.Add(-2 * time.Hour),
-	})
+	}, h.clock.now.Add(-2*time.Hour))
 
 	counterBefore := testutil.ToFloat64(telegramNotificationErrors)
-	if err := checker.CheckAlerts(context.Background()); err != nil {
+	if err := h.checker.CheckAlerts(context.Background()); err != nil {
 		t.Fatalf("CheckAlerts: %v", err)
 	}
 
-	if got := cmcRequests.Load(); got != 0 {
+	if got := len(h.cmcBatchesRequested()); got != 0 {
 		t.Errorf("dead-lettered alerts must spend no pricing quota, got %d CoinMarketCap requests", got)
 	}
-	if got := len(repo.added()); got != 0 {
+	if got := len(h.repo.added()); got != 0 {
 		t.Errorf("aged alert must be dead-lettered, %d remain", got)
 	}
-	if got := transport.sendAttempts(); got != 0 {
+	if got := h.transport.sendAttempts(); got != 0 {
 		t.Errorf("dead-lettered alert must not be notified, got %d attempts", got)
 	}
 	if got := testutil.ToFloat64(telegramNotificationErrors) - counterBefore; got != 1 {

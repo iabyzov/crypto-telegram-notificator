@@ -156,6 +156,46 @@ func TestFirestoreMarkDeliveryFailedStampsInPlace(t *testing.T) {
 	}
 }
 
+// TestFirestoreGetAlertByIDResolvesOnlyTheOwnersDocument pins the direct
+// by-id lookup against the real engine: the owner's read resolves exactly
+// the addressed document, another user's read of the same id is not found,
+// and an unknown id is not found — each without an error.
+func TestFirestoreGetAlertByIDResolvesOnlyTheOwnersDocument(t *testing.T) {
+	repo, _ := newEmulatorRepo(t)
+	ctx := context.Background()
+
+	repo.AddAlert(ctx, alerts.PriceAlert{
+		Symbol: "BTC", TargetPrice: 50000, UserID: 42, Type: alerts.More,
+	})
+	stored, err := repo.GetAlertsByUserID(ctx, 42)
+	if err != nil || len(stored) != 1 {
+		t.Fatalf("GetAlertsByUserID after AddAlert: %v, %d alerts", err, len(stored))
+	}
+	alert := stored[0]
+
+	found, err := repo.GetAlertByID(ctx, 42, alert.Id)
+	if err != nil {
+		t.Fatalf("GetAlertByID for the owner: %v", err)
+	}
+	if found == nil || found.Id != alert.Id || found.UserID != 42 ||
+		found.Symbol != "BTC" || found.TargetPrice != 50000 || found.Type != alerts.More {
+		t.Fatalf("the owner's id must resolve to their alert, got %+v", found)
+	}
+
+	foreign, err := repo.GetAlertByID(ctx, 7, alert.Id)
+	if err != nil {
+		t.Fatalf("GetAlertByID for a foreign user: %v", err)
+	}
+	if foreign != nil {
+		t.Errorf("another user's alert must be invisible, got %+v", foreign)
+	}
+
+	missing, err := repo.GetAlertByID(ctx, 42, "no-such-document")
+	if err != nil || missing != nil {
+		t.Errorf("unknown id must answer nil without error, got (%+v, %v)", missing, err)
+	}
+}
+
 // TestFirestoreMarkDeliveryFailedDoesNotResurrectDeletedAlert pins the
 // failure mode fixed in review: the checker stamps a delivery failure while
 // the alert is concurrently deleted (user /deletealert, or an overlapping

@@ -5,11 +5,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/iabyzov/coinmarketcap-telegram-bot/internal/domain/alerts"
 	"github.com/iabyzov/coinmarketcap-telegram-bot/internal/services"
 )
@@ -48,6 +49,12 @@ type checkerHarness struct {
 	transport *stubTelegramTransport
 	cmc       *httptest.Server
 	clock     *fakeClock
+
+	// cmcMu guards cmcBatches, which the fake server's goroutine appends to.
+	cmcMu sync.Mutex
+	// cmcBatches holds the symbol batch of every quotes/latest request, in
+	// request order: how the checker spent a run's pricing quota.
+	cmcBatches [][]string
 }
 
 // newCheckerHarness starts a fake CoinMarketCap server that quotes every
@@ -55,8 +62,18 @@ type checkerHarness struct {
 func newCheckerHarness(t *testing.T, price float64) *checkerHarness {
 	t.Helper()
 
+	h := &checkerHarness{}
 	cmc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		symbols := r.URL.Query()["symbol"]
+		// CoinMarketCap receives the symbols as one comma-separated query
+		// param and keys its response by each individual symbol.
+		var symbols []string
+		for _, param := range r.URL.Query()["symbol"] {
+			symbols = append(symbols, strings.Split(param, ",")...)
+		}
+		h.cmcMu.Lock()
+		h.cmcBatches = append(h.cmcBatches, symbols)
+		h.cmcMu.Unlock()
+
 		data := make(map[string]map[string]map[string]map[string]float64, len(symbols))
 		for _, symbol := range symbols {
 			// Mirrors the CoinMarketCap quotes/latest shape:
@@ -70,17 +87,27 @@ func newCheckerHarness(t *testing.T, price float64) *checkerHarness {
 	t.Cleanup(cmc.Close)
 
 	transport := &stubTelegramTransport{}
-	bot, err := tgbotapi.NewBotAPIWithClient("test-token", tgbotapi.APIEndpoint, transport)
-	if err != nil {
-		t.Fatalf("creating bot with stub transport: %v", err)
-	}
+	bot := newStubBot(t, transport)
 
 	repo := &fakeAlertsRepository{}
 	priceService := services.NewPriceServiceWithEndpoint("test-cmc-key", nil, time.Minute, cmc.URL)
 	clock := &fakeClock{now: time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)}
 	checker := NewAlertCheckerWithClock(repo, priceService, bot, clock)
 
-	return &checkerHarness{checker: checker, repo: repo, transport: transport, cmc: cmc, clock: clock}
+	h.checker = checker
+	h.repo = repo
+	h.transport = transport
+	h.cmc = cmc
+	h.clock = clock
+	return h
+}
+
+// cmcBatchesRequested returns the symbol batch of every quotes/latest
+// request, in request order.
+func (h *checkerHarness) cmcBatchesRequested() [][]string {
+	h.cmcMu.Lock()
+	defer h.cmcMu.Unlock()
+	return append([][]string(nil), h.cmcBatches...)
 }
 
 // runCheckWithAlert runs one scheduled check with a single stored alert.
@@ -103,6 +130,117 @@ func TestCheckAlertsSendsAndDeletesTriggeredAlert(t *testing.T) {
 	}
 	if got, want := len(h.repo.added()), 0; got != want {
 		t.Errorf("alert should be deleted after successful delivery, %d remain", got)
+	}
+}
+
+// TestCheckAlertsBatchesAndDedupesSymbols pins a run's pricing quota: all
+// live alerts are priced by a single batched CoinMarketCap request that names
+// each unique symbol exactly once - alerts sharing a symbol ride the same
+// quote - and every triggered alert is delivered, once to its own user.
+func TestCheckAlertsBatchesAndDedupesSymbols(t *testing.T) {
+	h := newCheckerHarness(t, 51000.0)
+	h.repo.AddAlert(context.Background(), alerts.PriceAlert{
+		Symbol: "BTC", TargetPrice: 50000, UserID: 1, Type: alerts.More,
+	})
+	h.repo.AddAlert(context.Background(), alerts.PriceAlert{
+		Symbol: "BTC", TargetPrice: 49500, UserID: 2, Type: alerts.More,
+	})
+	h.repo.AddAlert(context.Background(), alerts.PriceAlert{
+		Symbol: "ETH", TargetPrice: 3000, UserID: 3, Type: alerts.More,
+	})
+
+	if err := h.checker.CheckAlerts(context.Background()); err != nil {
+		t.Fatalf("CheckAlerts: %v", err)
+	}
+
+	batches := h.cmcBatchesRequested()
+	if got := len(batches); got != 1 {
+		t.Fatalf("a run must price all alerts in one batched request, got %d requests", got)
+	}
+	requested := append([]string(nil), batches[0]...)
+	slices.Sort(requested)
+	if want := []string{"BTC", "ETH"}; !slices.Equal(requested, want) {
+		t.Errorf("priced symbols = %v, want %v: each unique symbol exactly once", requested, want)
+	}
+
+	// Every triggered alert is delivered, exactly once to its own user.
+	chatCounts := make(map[int64]int)
+	for _, m := range h.transport.sentMessages() {
+		chatCounts[m.ChatID]++
+	}
+	for _, chatID := range []int64{1, 2, 3} {
+		if got := chatCounts[chatID]; got != 1 {
+			t.Errorf("user %d must receive exactly one notification, got %d", chatID, got)
+		}
+	}
+	if got := len(h.repo.added()); got != 0 {
+		t.Errorf("all triggered alerts must be deleted after delivery, %d remain", got)
+	}
+}
+
+// TestCheckAlertsFansOutDeliveryWithinWorkerBound pins the delivery fan-out
+// the worker pool exists for: a run with more triggered alerts than delivery
+// workers still delivers every alert exactly once to its own user, and the
+// deliveries overlap — bounded by the pool, so a burst of triggered alerts
+// parallelizes its Telegram round-trips without opening an unbounded number
+// of concurrent requests.
+func TestCheckAlertsFansOutDeliveryWithinWorkerBound(t *testing.T) {
+	h := newCheckerHarness(t, 51000.0)
+
+	// More triggered alerts than the pool's workers: the fan-out must not
+	// drop the ones beyond the first wave.
+	const alertCount = 8
+	for user := int64(1); user <= alertCount; user++ {
+		h.repo.AddAlert(context.Background(), alerts.PriceAlert{
+			Symbol: "BTC", TargetPrice: 50000, UserID: user, Type: alerts.More,
+		})
+	}
+
+	// Each send lingers briefly inside the transport while a counter tracks
+	// how many deliveries are in flight at once; the peak makes the fan-out
+	// observable. A sequential implementation deterministically peaks at 1.
+	var mu sync.Mutex
+	inFlight, peak := 0, 0
+	h.transport.onSend = func() {
+		mu.Lock()
+		inFlight++
+		peak = max(peak, inFlight)
+		mu.Unlock()
+		time.Sleep(25 * time.Millisecond)
+		mu.Lock()
+		inFlight--
+		mu.Unlock()
+	}
+
+	if err := h.checker.CheckAlerts(context.Background()); err != nil {
+		t.Fatalf("CheckAlerts: %v", err)
+	}
+
+	// Every alert was delivered exactly once to its own user.
+	messages := h.transport.sentMessages()
+	if got := len(messages); got != alertCount {
+		t.Fatalf("every triggered alert must be delivered, got %d of %d messages", got, alertCount)
+	}
+	seen := make(map[int64]bool, alertCount)
+	for _, m := range messages {
+		if seen[m.ChatID] {
+			t.Errorf("user %d received more than one notification", m.ChatID)
+		}
+		seen[m.ChatID] = true
+	}
+	if got := len(h.repo.added()); got != 0 {
+		t.Errorf("all delivered alerts must be deleted, %d remain", got)
+	}
+
+	// Deliveries overlapped, and never exceeded the worker pool's bound.
+	mu.Lock()
+	observed := peak
+	mu.Unlock()
+	if observed < 2 {
+		t.Errorf("deliveries must overlap instead of serializing each Telegram round-trip, peak concurrent sends = %d", observed)
+	}
+	if observed > 5 {
+		t.Errorf("concurrent deliveries must stay bounded by the delivery worker pool, peak = %d", observed)
 	}
 }
 
