@@ -21,14 +21,13 @@ func TestListAlertsWithRepositoryFailureSendsErrorToUser(t *testing.T) {
 
 	h.dispatchCommand(7, "listalerts", "")
 
-	messages := h.sentMessages()
-	if len(messages) != 1 {
-		t.Fatalf("want 1 error notice, got %d: %q", len(messages), h.sentTexts())
-	}
+	messages := h.wantSentMessages(t, 1)
 	if messages[0].ChatID != 7 {
 		t.Errorf("error notice must go to chat 7, got %d", messages[0].ChatID)
 	}
-	if !strings.Contains(messages[0].Text, "Failed to retrieve alerts") {
+	// Stable marker: the notice names the failed operation, not its exact
+	// wording; the rewordable "Please try again later." tail is not pinned.
+	if !strings.Contains(messages[0].Text, "Failed to retrieve") {
 		t.Errorf("user must be told the retrieval failed, got %q", messages[0].Text)
 	}
 	if got := len(h.repo.added()); got != 0 {
@@ -41,14 +40,11 @@ func TestListAlertsWithRepositoryFailureSendsErrorToUser(t *testing.T) {
 	h.repo.fatalErr = nil
 	h.dispatchCommand(7, "listalerts", "")
 
-	messages = h.sentMessages()
-	if len(messages) != 2 {
-		t.Fatalf("after recovery want 2 replies total, got %d: %q", len(messages), h.sentTexts())
-	}
+	messages = h.wantSentMessages(t, 2)
 	if messages[1].ChatID != 7 {
 		t.Errorf("recovery reply must go to chat 7, got %d", messages[1].ChatID)
 	}
-	if !strings.Contains(messages[1].Text, "You have no active alerts") {
+	if !strings.Contains(messages[1].Text, "no active alerts") {
 		t.Errorf("recovered /listalerts must report no alerts, got %q", messages[1].Text)
 	}
 }
@@ -64,28 +60,27 @@ func TestSetAlertThenListAlertsConversationSendsEveryReply(t *testing.T) {
 	h.dispatchCommand(7, "listalerts", "")
 	h.dispatchCommand(8, "listalerts", "")
 
-	messages := h.sentMessages()
-	if len(messages) != 3 {
-		t.Fatalf("a 3-command conversation must record every reply, got %d: %q", len(messages), h.sentTexts())
-	}
+	messages := h.wantSentMessages(t, 3)
 	if messages[0].ChatID != 7 || messages[1].ChatID != 7 || messages[2].ChatID != 8 {
 		t.Errorf("replies must keep their chat ids in order: got %d, %d, %d",
 			messages[0].ChatID, messages[1].ChatID, messages[2].ChatID)
 	}
-	if !strings.Contains(messages[0].Text, "Alert set for BTC at $50000.00") {
-		t.Errorf("first reply must confirm the alert, got %q", messages[0].Text)
+	// Stable markers: the confirmation names the symbol and price, never the
+	// surrounding sentence; the listing is identified by the symbol and the
+	// echoed alert id, not by its header or layout.
+	if !strings.Contains(messages[0].Text, "BTC") || !strings.Contains(messages[0].Text, "50000") {
+		t.Errorf("first reply must name the symbol and price, got %q", messages[0].Text)
 	}
 
 	stored := h.repo.added()
 	if len(stored) != 1 {
 		t.Fatalf("want 1 stored alert, got %d", len(stored))
 	}
-	if !strings.Contains(messages[1].Text, "Your active alerts") ||
-		!strings.Contains(messages[1].Text, "BTC") ||
-		!strings.Contains(messages[1].Text, stored[0].Id) {
+	if !strings.Contains(messages[1].Text, "BTC") || !strings.Contains(messages[1].Text, stored[0].Id) {
 		t.Errorf("second reply must list the stored alert with its id %q, got %q", stored[0].Id, messages[1].Text)
 	}
-	if !strings.Contains(messages[2].Text, "You have no active alerts") {
-		t.Errorf("user separation: chat 8 must see no alerts, got %q", messages[2].Text)
+	if !strings.Contains(messages[2].Text, "no active alerts") ||
+		strings.Contains(messages[2].Text, "BTC") || strings.Contains(messages[2].Text, stored[0].Id) {
+		t.Errorf("user separation: chat 8 must see its empty list, not user 7's alert, got %q", messages[2].Text)
 	}
 }

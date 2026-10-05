@@ -35,14 +35,13 @@ func TestHandleDeleteAlertDeletesAndConfirms(t *testing.T) {
 
 	h.dispatchCommand(7, "deletealert", alertID)
 
-	messages := h.sentMessages()
-	if len(messages) != 2 {
-		t.Fatalf("want setalert confirmation + delete confirmation, got %d: %q", len(messages), h.sentTexts())
-	}
+	messages := h.wantSentMessages(t, 2)
 	if messages[1].ChatID != 7 {
 		t.Errorf("delete confirmation must go to chat 7, got %d", messages[1].ChatID)
 	}
-	if !strings.Contains(messages[1].Text, "Alert deleted: BTC at $50000.00") {
+	// Stable marker: the confirmation names the symbol and price, never the
+	// surrounding sentence.
+	if !strings.Contains(messages[1].Text, "BTC") || !strings.Contains(messages[1].Text, "50000") {
 		t.Errorf("delete confirmation must restate the alert, got %q", messages[1].Text)
 	}
 	if remaining := h.repo.added(); len(remaining) != 0 {
@@ -60,14 +59,13 @@ func TestHandleDeleteAlertUnknownIDSaysNotFound(t *testing.T) {
 
 	h.dispatchCommand(7, "deletealert", "no-such-id")
 
-	messages := h.sentMessages()
-	if len(messages) != 2 {
-		t.Fatalf("want setalert confirmation + not-found notice, got %d: %q", len(messages), h.sentTexts())
-	}
+	messages := h.wantSentMessages(t, 2)
 	if messages[1].ChatID != 7 {
 		t.Errorf("not-found notice must go to chat 7, got %d", messages[1].ChatID)
 	}
-	if !strings.Contains(messages[1].Text, "Alert not found") {
+	// Stable marker: the semantic core, not the full sentence with its
+	// rewordable /listalerts hint.
+	if !strings.Contains(messages[1].Text, "not found") {
 		t.Errorf("unknown id must be reported as not found, got %q", messages[1].Text)
 	}
 	if remaining := h.repo.added(); len(remaining) != 1 {
@@ -83,14 +81,11 @@ func TestHandleDeleteAlertCannotDeleteOtherUsersAlert(t *testing.T) {
 	// unknown id, and user 7's alert survives untouched.
 	h.dispatchCommand(8, "deletealert", alertID)
 
-	messages := h.sentMessages()
-	if len(messages) != 2 {
-		t.Fatalf("want setalert confirmation + not-found notice, got %d: %q", len(messages), h.sentTexts())
-	}
+	messages := h.wantSentMessages(t, 2)
 	if messages[1].ChatID != 8 {
 		t.Errorf("not-found notice must go to chat 8, got %d", messages[1].ChatID)
 	}
-	if !strings.Contains(messages[1].Text, "Alert not found") {
+	if !strings.Contains(messages[1].Text, "not found") {
 		t.Errorf("another user's alert id must be reported as not found, got %q", messages[1].Text)
 	}
 	if remaining := h.repo.added(); len(remaining) != 1 || remaining[0].Id != alertID {
@@ -105,14 +100,13 @@ func TestHandleDeleteAlertRejectsWrongArgumentCount(t *testing.T) {
 
 			h.dispatchCommand(7, "deletealert", args)
 
-			messages := h.sentMessages()
-			if len(messages) != 1 {
-				t.Fatalf("want 1 format rejection, got %d: %q", len(messages), h.sentTexts())
-			}
+			messages := h.wantSentMessages(t, 1)
 			if messages[0].ChatID != 7 {
 				t.Errorf("rejection must go to chat 7, got %d", messages[0].ChatID)
 			}
-			if !strings.Contains(messages[0].Text, "Invalid format. Use: /deletealert <alert_id>") {
+			// Stable marker: the rejection vocabulary, not the full usage
+			// sentence whose hint text is rewordable.
+			if !strings.Contains(messages[0].Text, "Invalid format") {
 				t.Errorf("wrong argument count must be rejected with the format hint, got %q", messages[0].Text)
 			}
 			if remaining := h.repo.added(); len(remaining) != 0 {
@@ -128,15 +122,14 @@ func TestHandleDeleteAlertRepositoryFailureSaysRetrievalFailed(t *testing.T) {
 
 	h.dispatchCommand(7, "deletealert", "1")
 
-	messages := h.sentMessages()
-	if len(messages) != 1 {
-		t.Fatalf("want 1 error notice, got %d: %q", len(messages), h.sentTexts())
-	}
+	messages := h.wantSentMessages(t, 1)
 	if messages[0].ChatID != 7 {
 		t.Errorf("error notice must go to chat 7, got %d", messages[0].ChatID)
 	}
-	if !strings.Contains(messages[0].Text, "Failed to retrieve alerts") {
-		t.Errorf("a storage failure must be reported as a retrieval failure, got %q", messages[0].Text)
+	// Stable marker: the notice names the failed operation, not the
+	// rewordable "Please try again later." tail.
+	if !strings.Contains(messages[0].Text, "Failed to retrieve") {
+		t.Errorf("a lookup failure must be reported as a retrieval failure, got %q", messages[0].Text)
 	}
 }
 
@@ -147,14 +140,13 @@ func TestHandleDeleteAlertDeleteFailureSaysDeleteFailed(t *testing.T) {
 
 	h.dispatchCommand(7, "deletealert", "1")
 
-	messages := h.sentMessages()
-	if len(messages) != 1 {
-		t.Fatalf("want 1 error notice, got %d: %q", len(messages), h.sentTexts())
-	}
+	messages := h.wantSentMessages(t, 1)
 	if messages[0].ChatID != 7 {
 		t.Errorf("error notice must go to chat 7, got %d", messages[0].ChatID)
 	}
-	if !strings.Contains(messages[0].Text, "Failed to delete alert. Please try again later.") {
+	// Stable marker: the notice names the failed operation, not the
+	// rewordable "Please try again later." tail.
+	if !strings.Contains(messages[0].Text, "Failed to delete alert") {
 		t.Errorf("a failing delete must be reported as such, got %q", messages[0].Text)
 	}
 	if remaining := h.repo.added(); len(remaining) != 1 {

@@ -262,6 +262,19 @@ func (s *stubTelegramTransport) sendAttempts() int {
 	return s.attempts
 }
 
+// wantSentMessages fails the test unless exactly n messages were recorded,
+// and returns them. It is the len-based assert helper tests use in place of
+// hand-rolled count checks: assert 0, 1, or N sends and read the slice in
+// one step, never panicking on a mismatch.
+func (s *stubTelegramTransport) wantSentMessages(t *testing.T, n int) []stubSentMessage {
+	t.Helper()
+	messages := s.sentMessages()
+	if len(messages) != n {
+		t.Fatalf("want %d message(s) sent, got %d: %q", n, len(messages), sentTextsOf(messages))
+	}
+	return messages
+}
+
 // newTestHarness wires a TelegramWebhookHandler against a fake repository and
 // a stub Telegram transport (see newStubBot for how the transport is
 // injected), with no webhook secret.
@@ -331,12 +344,24 @@ func (h *testHarness) sentMessages() []stubSentMessage {
 
 // sentTexts returns the text of every successfully sent message.
 func (h *testHarness) sentTexts() []string {
-	messages := h.transport.sentMessages()
+	return sentTextsOf(h.transport.sentMessages())
+}
+
+// sentTextsOf returns the text of each message, for failure messages that
+// show what was actually sent.
+func sentTextsOf(messages []stubSentMessage) []string {
 	texts := make([]string, len(messages))
 	for i, m := range messages {
 		texts[i] = m.Text
 	}
 	return texts
+}
+
+// wantSentMessages is the harness delegate of the transport's len-based
+// assert helper: fail unless exactly n messages were sent, return them.
+func (h *testHarness) wantSentMessages(t *testing.T, n int) []stubSentMessage {
+	t.Helper()
+	return h.transport.wantSentMessages(t, n)
 }
 
 // waitForSend polls the stub transport until at least one message is sent or
@@ -525,6 +550,24 @@ func TestStubTransportSentMessagesNeverPanics(t *testing.T) {
 	}
 	if messages[0].ChatID != 1 || messages[1].ChatID != 2 {
 		t.Errorf("chat ids out of order or wrong: got %d, %d", messages[0].ChatID, messages[1].ChatID)
+	}
+}
+
+// TestStubTransportWantSentMessagesAssertsCount pins the len-based assert
+// helper future tests use instead of the panicking exactly-one accessor:
+// it fails the test (never panics) on any count mismatch and hands back the
+// recorded messages on match, whatever the count.
+func TestStubTransportWantSentMessagesAssertsCount(t *testing.T) {
+	transport := &stubTelegramTransport{}
+
+	if messages := transport.wantSentMessages(t, 0); len(messages) != 0 {
+		t.Errorf("wantSentMessages(0) must answer an empty slice, got %+v", messages)
+	}
+
+	h := newTestHarness(t)
+	h.dispatchCommand(1, "help", "")
+	if messages := h.wantSentMessages(t, 1); len(messages) != 1 || messages[0].ChatID != 1 {
+		t.Errorf("harness delegate must return the one recorded message, got %+v", messages)
 	}
 }
 
