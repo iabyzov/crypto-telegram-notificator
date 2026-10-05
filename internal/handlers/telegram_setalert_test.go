@@ -17,10 +17,7 @@ func TestHandleSetAlertInvalidAlertTypeCreatesNoAlert(t *testing.T) {
 			if got := len(h.repo.added()); got != 0 {
 				t.Errorf("invalid alert type %q: want 0 alerts recorded, got %d (%+v)", alertTypeWord, got, h.repo.added())
 			}
-			messages := h.sentMessages()
-			if len(messages) != 1 {
-				t.Fatalf("want 1 rejection message, got %d: %q", len(messages), h.sentTexts())
-			}
+			messages := h.wantSentMessages(t, 1)
 			if messages[0].ChatID != 42 {
 				t.Errorf("rejection must go to chat 42, got %d", messages[0].ChatID)
 			}
@@ -63,10 +60,7 @@ func TestHandleSetAlertValidInputCreatesAlert(t *testing.T) {
 				t.Errorf("want type %s, got %s", tc.wantType, alert.Type)
 			}
 
-			messages := h.sentMessages()
-			if len(messages) != 1 {
-				t.Fatalf("want 1 confirmation message, got %d: %q", len(messages), h.sentTexts())
-			}
+			messages := h.wantSentMessages(t, 1)
 			if messages[0].ChatID != 42 {
 				t.Errorf("confirmation must go to chat 42, got %d", messages[0].ChatID)
 			}
