@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"log"
 	"net/http"
 	"net/http/pprof"
@@ -46,7 +47,12 @@ func mustEnv(key string) string {
 // /check-alerts is counted on the corresponding endpoint counter, whatever
 // the outcome. The Prometheus /metrics endpoint is deliberately not part of
 // this surface: it is served on its own port.
-func newMainMux(alertChecker *handlers.AlertChecker, telegramHandler *handlers.TelegramWebhookHandler) *http.ServeMux {
+//
+// alertCheckSecret, when non-empty, must match the X-Alert-Check-Secret
+// header of every /check-alerts request, so the quota-spending scheduler
+// endpoint rejects requests from anyone who does not hold the shared
+// secret; empty means the check is skipped.
+func newMainMux(alertChecker *handlers.AlertChecker, telegramHandler *handlers.TelegramWebhookHandler, alertCheckSecret string) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/debug/pprof/", pprof.Index)
 	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
@@ -63,6 +69,10 @@ func newMainMux(alertChecker *handlers.AlertChecker, telegramHandler *handlers.T
 	// Alert checker endpoint (can be triggered by Cloud Scheduler via HTTP)
 	mux.HandleFunc("/check-alerts", func(w http.ResponseWriter, r *http.Request) {
 		checkAlertMetric.Inc()
+		if !authorizedAlertCheckRequest(r, alertCheckSecret) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 		log.Println("Starting price alert check...")
 
 		if err := alertChecker.CheckAlerts(r.Context()); err != nil {
@@ -83,6 +93,20 @@ func newMainMux(alertChecker *handlers.AlertChecker, telegramHandler *handlers.T
 	})
 
 	return mux
+}
+
+// authorizedAlertCheckRequest reports whether the /check-alerts request
+// carries the scheduler's shared secret. The compare is constant-time, like
+// the Telegram webhook's authorizedWebhookRequest, so an attacker cannot
+// shave guesses off the response latency.
+func authorizedAlertCheckRequest(r *http.Request, alertCheckSecret string) bool {
+	if alertCheckSecret == "" {
+		return true
+	}
+	return subtle.ConstantTimeCompare(
+		[]byte(r.Header.Get("X-Alert-Check-Secret")),
+		[]byte(alertCheckSecret),
+	) == 1
 }
 
 func main() {
@@ -127,6 +151,11 @@ func main() {
 		log.Printf("WARNING: TELEGRAM_WEBHOOK_SECRET is not set; /webhook will accept requests from anyone. " +
 			"Set it and pass it to setWebhook's secret_token to enable verification.")
 	}
+	alertCheckSecret := os.Getenv("ALERT_CHECK_SECRET")
+	if alertCheckSecret == "" {
+		log.Printf("WARNING: ALERT_CHECK_SECRET is not set; /check-alerts will accept requests from anyone. " +
+			"Set it and send it in the X-Alert-Check-Secret header of the Cloud Scheduler job to enable verification.")
+	}
 	if llmAPIKey == "" || llmBaseUrl == "" {
 		log.Printf("llm integration is disabled")
 	} else {
@@ -140,8 +169,7 @@ func main() {
 	alertChecker := handlers.NewAlertChecker(alertsRepository, priceService, bot)
 	telegramHandler := handlers.NewTelegramWebhookHandler(bot, alertsRepository, alertLlmParser, webhookSecret)
 
-	mux := newMainMux(alertChecker, telegramHandler)
-
+	mux := newMainMux(alertChecker, telegramHandler, alertCheckSecret)
 	promMux := http.NewServeMux()
 	promMux.Handle("/metrics", promhttp.Handler())
 

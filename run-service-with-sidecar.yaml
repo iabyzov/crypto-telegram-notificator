@@ -25,6 +25,8 @@ spec:
           value: "UPSTASH_REDIS_URL_PLACEHOLDER"
         - name: TELEGRAM_WEBHOOK_SECRET
           value: "TELEGRAM_WEBHOOK_SECRET_PLACEHOLDER"
+        - name: ALERT_CHECK_SECRET
+          value: "ALERT_CHECK_SECRET_PLACEHOLDER"
         - name: LLM_API_KEY
           value: "LLM_API_KEY_PLACEHOLDER"
         - name: LLM_BASE_URL

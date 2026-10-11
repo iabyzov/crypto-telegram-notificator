@@ -93,9 +93,16 @@ func (failingAlertsRepo) GetAllAlerts(context.Context) ([]alerts.PriceAlert, err
 // every request these tests make is answered by the webhook's method and
 // JSON validation before any send or lookup can happen.
 func mainMuxUnderTest(repo handlers.AlertsRepository) *http.ServeMux {
+	return mainMuxUnderTestWithAlertCheckSecret(repo, "")
+}
+
+// mainMuxUnderTestWithAlertCheckSecret is mainMuxUnderTest with the
+// /check-alerts shared-secret configured, so the secret-aware endpoint tests
+// can gate the same surface.
+func mainMuxUnderTestWithAlertCheckSecret(repo handlers.AlertsRepository, alertCheckSecret string) *http.ServeMux {
 	checker := handlers.NewAlertChecker(repo, nil, nil)
 	telegram := handlers.NewTelegramWebhookHandler(nil, nil, nil, "")
-	return newMainMux(checker, telegram)
+	return newMainMux(checker, telegram, alertCheckSecret)
 }
 
 func TestHealthEndpointAnswersOK(t *testing.T) {
@@ -169,6 +176,61 @@ func TestCheckAlertsEndpointReportsCheckFailure(t *testing.T) {
 	}
 	if got := rec.Body.String(); !strings.Contains(got, "Error checking alerts") {
 		t.Fatalf("GET /check-alerts failure body = %q, want it to report the check error", got)
+	}
+}
+
+// TestCheckAlertsEndpointSecret gates the scheduler endpoint with the
+// ALERT_CHECK_SECRET shared secret: when configured, a request without the
+// matching X-Alert-Check-Secret header is rejected with 401 before any
+// alert-checking (and CoinMarketCap quota) happens; when unset, the check
+// is skipped so the endpoint stays open. The empty repository makes an
+// authorized request succeed without touching any other dependency.
+func TestCheckAlertsEndpointSecret(t *testing.T) {
+	tests := []struct {
+		name             string
+		alertCheckSecret string
+		headerSecret     string
+		wantStatus       int
+	}{
+		{
+			name:             "matching secret accepted",
+			alertCheckSecret: "s3cret",
+			headerSecret:     "s3cret",
+			wantStatus:       http.StatusOK,
+		},
+		{
+			name:             "missing secret rejected",
+			alertCheckSecret: "s3cret",
+			headerSecret:     "",
+			wantStatus:       http.StatusUnauthorized,
+		},
+		{
+			name:             "wrong secret rejected",
+			alertCheckSecret: "s3cret",
+			headerSecret:     "not-the-secret",
+			wantStatus:       http.StatusUnauthorized,
+		},
+		{
+			name:             "empty configured secret skips check",
+			alertCheckSecret: "",
+			headerSecret:     "",
+			wantStatus:       http.StatusOK,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/check-alerts", nil)
+			if tt.headerSecret != "" {
+				req.Header.Set("X-Alert-Check-Secret", tt.headerSecret)
+			}
+			rec := httptest.NewRecorder()
+			mainMuxUnderTestWithAlertCheckSecret(emptyAlertsRepo{}, tt.alertCheckSecret).ServeHTTP(rec, req)
+
+			if rec.Code != tt.wantStatus {
+				t.Errorf("status = %d, want %d", rec.Code, tt.wantStatus)
+			}
+		})
 	}
 }
 
