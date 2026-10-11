@@ -184,7 +184,7 @@ gcloud scheduler jobs create http check-alerts-job \
 
 The `--headers` value must match the service's `ALERT_CHECK_SECRET` environment variable; when that variable is set, `/check-alerts` rejects requests without the matching `X-Alert-Check-Secret` header with 401 (constant-time compare), so the quota-spending check run cannot be triggered by anyone else.
 
-For an existing scheduler job, the same flag applies via `update`:
+For an existing scheduler job, set the same header via `update` — unlike `create`, the `update` command takes `--update-headers`:
 
 ```bash
 # Add the header to an existing scheduler job
@@ -192,7 +192,7 @@ gcloud scheduler jobs update http check-alerts-job \
   --schedule="*/5 * * * *" \
   --uri="<YOUR_CLOUD_RUN_URL>/check-alerts" \
   --http-method=GET \
-  --headers="X-Alert-Check-Secret=<ALERT_CHECK_SECRET>" \
+  --update-headers="X-Alert-Check-Secret=<ALERT_CHECK_SECRET>" \
   --location=us-central1 \
   --description="Triggers price alert checking every 5 minutes"
 ```
