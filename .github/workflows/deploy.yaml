@@ -12,7 +12,6 @@ on:
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   REGION: us-central1
-  SERVICE_NAME: crypto-telegram-notificator
   REPOSITORY: crypto-telegram-notificator
   IMAGE_NAME: telegram-handler
 
@@ -63,6 +62,7 @@ jobs:
               -e "s|CMC_API_KEY_PLACEHOLDER|${{ secrets.CMC_API_KEY }}|g" \
               -e "s|UPSTASH_REDIS_URL_PLACEHOLDER|${{ secrets.UPSTASH_REDIS_URL }}|g" \
               -e "s|TELEGRAM_WEBHOOK_SECRET_PLACEHOLDER|${{ secrets.TELEGRAM_WEBHOOK_SECRET }}|g" \
+              -e "s|ALERT_CHECK_SECRET_PLACEHOLDER|${{ secrets.ALERT_CHECK_SECRET }}|g" \
               -e "s|LLM_API_KEY_PLACEHOLDER|${{ secrets.LLM_API_KEY }}|g" \
               -e "s|LLM_BASE_URL_PLACEHOLDER|${{ secrets.LLM_BASE_URL }}|g" \
               run-service-with-sidecar.yaml > /tmp/service.yaml
@@ -70,3 +70,16 @@ jobs:
       - name: Deploy multi-container service to Cloud Run
         run: |
           gcloud run services replace /tmp/service.yaml --region=${{ env.REGION }}
+
+      - name: Apply public invoker policy
+        run: |
+          # The deployed service is named by the manifest's metadata.name;
+          # derive it from the rendered YAML so this step cannot drift from
+          # what gcloud run services replace deployed.
+          SERVICE=$(sed -n 's/^  name: //p' /tmp/service.yaml | head -n1)
+          if [ -z "$SERVICE" ]; then
+            echo "::error::could not find metadata.name in /tmp/service.yaml"
+            exit 1
+          fi
+          echo "Applying policy.yaml to service '$SERVICE' in region '${{ env.REGION }}'"
+          gcloud run services set-iam-policy "$SERVICE" policy.yaml --region=${{ env.REGION }}

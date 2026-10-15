@@ -31,12 +31,13 @@ The service uses the following environment variables:
 - `CMC_API_KEY`: Your CoinMarketCap API key
 - `GCP_PROJECT_ID`: Your Google Cloud Project ID
 - `TELEGRAM_WEBHOOK_SECRET` (optional): Secret token Telegram sends in the `X-Telegram-Bot-Api-Secret-Token` header on every webhook request. When set, requests without a matching header are rejected with 401. When unset, the check is skipped (a startup warning is logged) - set it and pass the same value to `setWebhook`'s `secret_token` to enable verification.
+- `ALERT_CHECK_SECRET` (optional): Shared secret the Cloud Scheduler job sends in the `X-Alert-Check-Secret` header on every `/check-alerts` request, so that endpoint cannot be triggered by anyone (each triggered run spends CoinMarketCap API quota). When set, requests without a matching header are rejected with 401. When unset, the check is skipped (a startup warning is logged) - set it and pass the same value in the scheduler job's `--headers` to enable verification.
 
 ## Deployment
 
 ### CI/CD with GitHub Actions
 
-The project includes two GitHub Actions workflows. The **CI** workflow builds, vets, and tests the code on every push to `main` and on every pull request targeting `main`. The **Build and Deploy to Cloud Run** workflow then builds and deploys the service to Cloud Run, but only after a push-triggered CI run on `main` completes successfully — it deploys the exact commit that CI validated.
+The project includes two GitHub Actions workflows. The **CI** workflow builds, vets, and tests the code on every push to `main` and on every pull request targeting `main`. The **Build and Deploy to Cloud Run** workflow then builds and deploys the service to Cloud Run, but only after a push-triggered CI run on `main` completes successfully — it deploys the exact commit that CI validated. After deploying, it applies `policy.yaml` to the service, re-granting `allUsers` the `roles/run.invoker` role that `gcloud run services replace` does not itself preserve; without this step every redeploy leaves the service private and the scheduler's calls fail authentication.
 
 #### One-time setup: Workload Identity Federation
 
@@ -124,6 +125,7 @@ echo "Also add TELEGRAM_BOT_TOKEN and CMC_API_KEY as GitHub Secrets."
 | `TELEGRAM_BOT_TOKEN` | Telegram bot token |
 | `CMC_API_KEY` | CoinMarketCap API key |
 | `TELEGRAM_WEBHOOK_SECRET` | Secret token for the Telegram webhook (optional; pass the same value to `setWebhook`'s `secret_token`) |
+| `ALERT_CHECK_SECRET` | Shared secret for the `/check-alerts` endpoint (optional; pass the same value in the scheduler job's `--headers` as `X-Alert-Check-Secret`) |
 
 ### 1. Deploy to Google Cloud Run (manual)
 
@@ -175,6 +177,22 @@ gcloud scheduler jobs create http check-alerts-job \
   --schedule="*/5 * * * *" \
   --uri="<YOUR_CLOUD_RUN_URL>/check-alerts" \
   --http-method=GET \
+  --headers="X-Alert-Check-Secret=<ALERT_CHECK_SECRET>" \
+  --location=us-central1 \
+  --description="Triggers price alert checking every 5 minutes"
+```
+
+The `--headers` value must match the service's `ALERT_CHECK_SECRET` environment variable; when that variable is set, `/check-alerts` rejects requests without the matching `X-Alert-Check-Secret` header with 401 (constant-time compare), so the quota-spending check run cannot be triggered by anyone else. For verification to be active, the service must be deployed with `ALERT_CHECK_SECRET` set to the same value (for manual deploys, add it to the `--set-env-vars` list).
+
+For an existing scheduler job, set the same header via `update` — unlike `create`, the `update` command takes `--update-headers`:
+
+```bash
+# Add the header to an existing scheduler job
+gcloud scheduler jobs update http check-alerts-job \
+  --schedule="*/5 * * * *" \
+  --uri="<YOUR_CLOUD_RUN_URL>/check-alerts" \
+  --http-method=GET \
+  --update-headers="X-Alert-Check-Secret=<ALERT_CHECK_SECRET>" \
   --location=us-central1 \
   --description="Triggers price alert checking every 5 minutes"
 ```
